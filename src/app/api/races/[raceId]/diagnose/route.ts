@@ -220,6 +220,14 @@ export async function POST(
   }
   const { input, biasReferenceRaceId } = loaded;
 
+  // 障害レース・新馬戦はコスト対象外 (screeningのHaiku呼び出しすら行わない)。
+  if (input.race.track_type === "障害") {
+    return NextResponse.json({ tier: "skipped", reason: "障害レースは診断対象外" });
+  }
+  if (input.race.race_class?.includes("新馬")) {
+    return NextResponse.json({ tier: "skipped", reason: "新馬戦は診断対象外" });
+  }
+
   // 一次スクリーニング (Haiku) でC評価なら、コスト削減のためここで打ち切る。
   const screening = await screenRace(input);
   await logUsage(supabase, raceId, "screening", screening.usage);
