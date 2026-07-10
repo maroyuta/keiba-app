@@ -6,6 +6,24 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
+## 📊 進捗率(目安、2026-07-11時点)
+
+**JV-Link→Supabase自動同期パイプライン全体: 体感70〜80%**
+- JV-Link接続・生データ取得: 完了 ✅
+- RA/SE/JGのフィールドパーサー: 完了 ✅ (Windows側で実データ検証済み)
+- **Supabase書き込み: 完了 ✅ (2026-07-11、実データend-to-end検証済み)。** 2026-07-05開催分の
+  実データ(races=144件・horses=1848件・race_entries=1470件、skipped=0)をSupabaseへ投入し、
+  オッズ/斤量/タイム/track_type等の主要フィールドが実態と矛盾しないことを確認済み(詳細は
+  `scripts/jvlink/README.md`「load_to_supabase.pyの既知の制約・要検証事項」参照)
+- 差分同期・週次自動実行の仕組み: コード完成、Windows実機での動作確認はまだ
+- Windowsタスクスケジューラ登録: 未着手
+
+**アプリ本体(診断ロジック・UI・ダッシュボード): ほぼ完成。** 残りは主に「JV-Linkの実データが
+流れてきた時に正しく動くか」の検証(マイグレーション適用確認・実ブラウザ確認など、下記参照)。
+
+この数値は正確な計測ではなく体感の目安。**質問「今何%?」が来たら、この節を更新してから
+答えること。** 次回の作業もここから状況を把握できる。
+
 ## ⏸️ 引き継ぎ中の相談 (2026-07-10更新、ここから再開)
 
 **このセッションで実装済み(すべてgitコミット済み、ローカルのみ・push未実施):**
@@ -24,7 +42,24 @@ This version has breaking changes — APIs, conventions, and file structure may 
 2. **`npm run build`(型チェック込み)がこのセッション中は一度も実行できていない。** node/npm/Supabase CLIがこのサンドボックスに一切無かったため。node環境のあるターミナルで実行し、特に以下を要チェック: `race_recommendation_results`の`races(...)`ネスト埋め込みselectの型付け(`src/app/dashboard/page.tsx`)、Tailwindの`line-clamp-1`(`RecommendationList.tsx`)
 3. **実ブラウザでの動作確認も未実施。** `/dashboard`・「本気診断する」ボタン(S評価のレースにのみ表示されるか)・新馬/障害レースでdiagnoseが`{tier: "skipped"}`を返すか、をスマホ幅で確認する
 4. **premium(Opus)診断の実測usageを取るか?** — まだユーザーの明示的な回答待ち(1回課金される)
-5. **JV-Link接続** — 最大のブロッカー。Windows PC + JRA-VAN Data Lab.契約は用意済みとユーザーから確認済みだが、着手はまだ(「今日やるなら後で」と保留中)。これが繋がるまで、上記で作った統計・回収率まわりのテーブルは全て空のまま
+5. **JV-Link接続 — ✅ 疎通確認完了 (2026-07-11)。** Windows PC側でClaude Codeを使い、実際にJV-Linkから生データの取得に成功した(RA=レース詳細37件、SE=馬毎レース情報492件、JG=1002件、合計1531件を取得・確認済み)。作業はこのリポジトリではなくWindows PC上の`C:\Users\maroy\OneDrive\デスクトップ\jvlink\`で別途行われており、このリポジトリの`scripts/jvlink/fetch_raw.py`(Mac側セッションで作成した雛形)とは別の実装になっている。Windows側での実装・デバッグ過程で判明した重要な知見:
+   - `JVRead("", 0, "")`のようにバッファサイズに0を渡すと`STATUS_STACK_BUFFER_OVERRUN`でクラッシュする。十分な数値(例: 110000)を渡す必要がある(このリポジトリの`fetch_raw.py`は元から`READ_BUFFER_SIZE = 300000`を渡しており問題なし)
+   - `JVSetUIProperties()`は実行のたびに「JV-Link設定」ネイティブダイアログが出て非対話実行がブロックされるため、毎回のダウンロードスクリプトからは外し、初回のみ実行する別スクリプト(`setup.py`)に分離するべき(このリポジトリの`fetch_raw.py`は現状`JVSetUIProperties()`を毎回呼ぶ設計のままなので、要修正)
+   - 相対パス(`.\out`)は実行時のカレントディレクトリ次第で意図しない場所に保存されることがあるため、絶対パス指定が安全
+   - 文字コードcp932は正しく機能している(ターミナル表示上の文字化けはコンソールのエンコーディング表示の問題で、ファイル自体は正しい)
+   - **未確認:** `JG`レコードが何を指すか(RACE/SLOP/WOOD/BLODの調査時にはJG自体を確認していない)。次回JV-Data仕様書で要確認
+   - **次のステップとしてWindows側でRA/SEのフィールド単位パーサー実装に着手依頼済み。** 進捗はWindows側のセッションで追うため、このリポジトリのコード変更(Supabase書き込み処理等)は別途反映が必要になる見込み
+   - **要TODO:** このリポジトリの`scripts/jvlink/`(Mac側雛形)とWindows側`jvlink`フォルダの実装が分岐しているため、いずれかのタイミングで一本化する(Windows側の動作確認済みコードをこのリポジトリに取り込むのが筋が良さそう)。2026-07-11時点でこのリポジトリにGitHubリモートが無い(ローカルのみ)ことも判明しており、Mac↔Windows間のコード共有には何らかのリモートリポジトリ設定がまず必要
+   - **✅ 続けてRA/SEのフィールドパーサー(`parse_records.py`)も同日中にWindows側で完成・検証済み。** JRA-VAN公式配布の`JVData_Struct.cs`のバイトオフセット定義と完全一致することを確認し、馬名・騎手名・レース名等の日本語を含めて正しく抽出できることを検証済み(例: 馬名「ボーンディスウェイ」、騎手「丸山元気」、レース名「七夕賞」)
+   - **重要な発見: 文字化けバグ。** Windowsのシステムロケール(非Unicodeプログラム用言語)が日本語でない環境だと、JV-LinkのBSTRがCP1252として誤変換され文字化けする。`parse_records.py`内に`fix_mojibake()`(CP1252の未定義5バイトを恒等変換で補完した逆マッピング)を実装して回避したが、恒久対策としてはWindows側で「コントロールパネル→地域→管理→システムロケールの変更→日本語」への変更(要再起動)が望ましい
+   - **`parse_records.py`は64bit Pythonで実行可能**(COM不要のテキスト処理のため)。`fetch_raw.py`/`setup.py`(JV-Link接続、32bit必須)とは実行環境の制約が異なる点に注意。将来的にはパース以降の処理(Supabase書き込み等)はMac側でも開発できる見込み
+   - Windows側の最終ファイル構成(`C:\Users\maroy\OneDrive\デスクトップ\jvlink\`): `fetch_raw.py`(ダウンロード)・`parse_records.py`(パース→CSV化)・`setup.py`(JV-Link接続設定、初回のみ)・`requirements.txt`
+   - **✅ 過去の完了済みレース(2026-07-05開催)で再取得・検証したところ、着順(01,02,03...)・タイム(1098=1分09秒8)・オッズ・人気まで実データとして正しく取れることを確認済み。** `load_to_db.py`(Windows側)でRA/SE/JGのCSVをローカルSQLiteに読み込みrace_idでJOINできることも確認済み。JV-Link接続からパースまでのパイプライン全体が実データで動作検証された
+   - **✅ Supabase書き込みスクリプト`scripts/jvlink/load_to_supabase.py`をMac側で新規作成(2026-07-11)。** RA_parsed.csv/SE_parsed.csvを読み込み、races/horses/race_entriesへPostgREST API経由でupsertする(標準ライブラリのみ使用、Mac/Windows両対応)。ダミーデータでのロジック単体テストは実施済みだが、**Windows側の実CSVを使ったend-to-endテストはまだ**。JV-Dataの数値コード変換(track_type/grade/weather/track_condition/odds_win/jockey_weight_kgのスケール)の一部は確度が低く要検証(詳細は`scripts/jvlink/README.md`参照)。finish_time_secの変換のみWindows側で実データ検証済みのため確度が高い
+   - **✅ 差分同期の仕組み・週次自動実行オーケストレーターをMac側で追加(2026-07-11、Windowsが利用上限/シャットダウンで使えない間の作業)。** `fetch_raw.py`がoption=1成功時にJVOpenの`lastfiletimestamp`を`out/last_sync.txt`に保存するよう変更。新設した`scripts/jvlink/run_weekly_sync.py`が`fetch_raw.py`(32bit)→`parse_records.py`→`load_to_supabase.py`(64bit)を順に実行し、`last_sync.txt`があれば次回のfromtimeとして再利用する(無ければ直近7日分から開始)。Windowsタスクスケジューラへの`schtasks`登録コマンド例も`scripts/jvlink/README.md`に用意した。**⚠️この一連の自動化コードは一度もWindowsで実行できておらず未検証**(下記reconcile後に確認が必要)
+   - **設計判断: 週次の完全自動実行に限り、Supabase認証情報をWindows PCのローカルファイル(`.env.jvlink`、gitignore対象)に置く運用を許容することにした。** 手動での検証実行(Mac側で`load_to_supabase.py`を直接叩く)では引き続きWindowsに認証情報を置かない方針を維持するが、無人実行の自動化には認証情報がその場に必要なため、個人PC上のgitignore済みローカルファイルとして保持する妥協をした(チャットへの貼り付け・gitコミットとは明確に区別)
+   - **✅ `setup.py`分離・`fix_mojibake()`もMac側リポジトリに反映済み(2026-07-11、Windows利用上限中の作業)。** `scripts/jvlink/setup.py`(JVSetUIProperties専用、初回のみ)を新設し`fetch_raw.py`からは削除。`scripts/jvlink/mojibake.py`に`fix_mojibake()`を実装し、`fetch_raw.py --fix-mojibake`で明示的に有効化する設計(常時適用ではなくopt-in。システムロケールが日本語で問題が起きない環境を壊さないため)。**合成データ(正常文字列をわざとCP1252誤デコードして人工的に文字化けを再現)での往復変換テストは成功したが、Windows実機の本物の文字化けデータでの検証はまだ**
+   - **次回最優先: (1)** `parse_records.py`(RA/SE/JGのフィールドパーサー)はまだこのリポジトリに無い。JV-Data仕様書のバイトオフセットに依存するため、Windows側の検証済みコードをそのまま移植するのが安全(一から書き直すとオフセットのリスクがある)。**(2)** 2026-07-05の実CSVで`load_to_supabase.py`を実際に実行し、Supabaseに入った値(特にtrack_type/grade/odds_win)を実際のレース結果と突き合わせて要検証項目を確定させる。**(3)** `run_weekly_sync.py`をWindows側で実際に1回通しで動作確認し、問題なければ`schtasks`でタスクスケジューラに登録する
 
 背景: ユーザーは当初月¥12,000のコストは払いたくない、実際に買うのは~5レース/日程度、という制約から相談を開始。その後¥4,000程度への圧縮・オッズ妙味重視の予想ロジック・回収率の可視化と話が進んだ。
 
@@ -40,7 +75,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 - `screening` = Haiku 4.5 (`claude-haiku-4-5`): 全レースの一次スクリーニング
 - `standard` = Sonnet 5 (`claude-sonnet-5`): 標準レースの診断表生成
-- `premium` = Opus 4.8 (`claude-opus-4-8`): 「本気で買う」と判定した重要レースのみ
+- `premium` = Opus 4.8 (`claude-opus-4-8`): 「本気で買う」と判定した重要レースのみ。**未勝利・新馬戦はrace_rank=Sが出てもpremiumへエスカレーションしない(2026-07-11)** — standard(Sonnet)止まり。新馬戦はもともとscreening自体を呼ばず対象外だが、未勝利はscreening→standardまで進むためS評価が付きうる。`route.ts`のpremiumゲート(`?tier=premium`)とUI側の「本気診断」ボタン表示(`DiagnoseButton.tsx`)の両方でrace_classの「未勝利」「新馬」を弾く。Why: 未勝利・新馬戦は情報量が少なく血統・調教等の判断材料が薄いため、高コストなOpus診断の投資対効果が低いとの判断
 
 月額運用コスト目安: JRA-VAN会費込みで約4,000〜5,000円/月。
 

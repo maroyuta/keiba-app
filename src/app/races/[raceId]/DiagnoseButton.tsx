@@ -7,12 +7,16 @@ export function DiagnoseButton({
   raceId,
   hasResult,
   raceRank,
+  raceClass,
 }: {
   raceId: string;
   hasResult: boolean;
   raceRank: "S" | "A" | "B" | "C" | null;
+  raceClass: string | null;
 }) {
   const router = useRouter();
+  const isPremiumEligible =
+    raceRank === "S" && !raceClass?.includes("未勝利") && !raceClass?.includes("新馬");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [premiumStatus, setPremiumStatus] = useState<"idle" | "loading" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -49,7 +53,7 @@ export function DiagnoseButton({
         >
           {status === "loading" ? "診断中… (最大1分ほどかかります)" : hasResult ? "再診断する" : "診断する"}
         </button>
-        {raceRank === "S" && (
+        {isPremiumEligible && (
           <button
             type="button"
             onClick={() => runDiagnosis("premium")}

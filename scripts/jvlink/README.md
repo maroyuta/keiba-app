@@ -1,0 +1,144 @@
+# JV-Link同期バッチ (Python, 一部Windows専用)
+
+JV-LinkはWindows専用の32bit COMコンポーネントのため、データ取得(`fetch_raw.py`)と接続設定
+(`setup.py`)は**Windows PC上で32bit Pythonから**実行する必要がある。一方、パース(`parse_records.py`)と
+Supabase書き込み(`load_to_supabase.py`)はJV-Link COMに依存しない純粋なテキスト処理なので、
+Mac/Windowsどちらでも(32bit/64bit問わず)実行できる。
+
+## 現状 (2026-07-11時点) — 重要: このディレクトリとWindows実機の実装は分岐している
+
+**Windows PC(`C:\Users\maroy\OneDrive\デスクトップ\jvlink\`)側で、実際にJV-Linkへ接続して
+実データを取得・パースするところまで動作検証済み。** ただし作業はこのリポジトリの外(別セッション)で
+進んでおり、このディレクトリの`fetch_raw.py`はまだWindows側の検証済みコードを取り込めていない
+(下記「Windows側との既知の差分」参照)。次にこのリポジトリで作業するときは、まずWindows側の
+最新コードをここに反映することから始めるとよい。
+
+**Windows側で検証済みの内容:**
+- JV-Link接続・生データ取得・RA(レース詳細)/SE(馬毎レース情報)/JG(競走馬除外情報)のパース
+- 過去の完了済みレース(2026-07-05開催分)で再取得し、着順・タイム・オッズ・人気が実際の結果と
+  一致することを確認済み
+- ローカルSQLiteに読み込みrace_idでJOINできることも確認済み(`load_to_db.py`、Windows側のみ)
+
+**このリポジトリ側(Mac)で新規に追加したもの:**
+- `load_to_supabase.py` — RA_parsed.csv/SE_parsed.csvを読み込みSupabaseのraces/horses/race_entries
+  へupsertするスクリプト。ダミーデータでのロジック単体テストのみ実施済み。**実際のWindows側CSVでの
+  end-to-endテストはまだ**(Windows側の実ファイルを使った検証が次回必要)
+
+## Windows側との既知の差分 (要reconcile)
+
+Windows側の実機デバッグで判明した3つの修正のうち、2つはこのリポジトリにも反映済み(2026-07-11):
+
+1. **✅ 反映済み** `JVSetUIProperties()`を毎回呼ぶと実行のたびに「JV-Link設定」ダイアログが出て
+   非対話実行がブロックされる問題 → 初回のみ実行する`setup.py`に分離した。`fetch_raw.py`からは
+   `JVSetUIProperties()`の呼び出しを削除済み
+2. **✅ 反映済み(ただし要検証)** 文字化け対策 — `mojibake.py`に`fix_mojibake()`を実装し、
+   `fetch_raw.py --fix-mojibake`で明示的に有効化できるようにした(デフォルトは無効。システム
+   ロケールが日本語で問題が発生しない環境で正常なデータを壊さないための opt-in 設計)。
+   **⚠️ 合成データ(正常な文字列をわざとCP1252で誤デコードして人工的に文字化けを再現したもの)
+   での往復変換テストは成功しているが、Windows実機の本物の文字化けデータでの検証はまだ**
+3. `READ_BUFFER_SIZE`はこのリポジトリでは`300000`を設定済みで、Windows側で発生した
+   「バッファサイズ0でSTATUS_STACK_BUFFER_OVERRUN」問題は元から回避できている
+
+**残っている差分:** `parse_records.py`(RA/SE/JGのフィールド単位パーサー)はこのリポジトリに
+まだ無い。JV-Data仕様書のバイトオフセット定義に依存する実装のため、Windows側で実際に
+`JVData_Struct.cs`と突き合わせ検証済みのコードをそのまま移植するのが安全(このリポジトリで
+一から書き起こすと検証されていないオフセットになるリスクがある)。
+
+**✅ `load_to_supabase.py`はWindows側で見つかった2つのバグ修正を反映し、完全に一本化済み
+(2026-07-11)。** (1) 各payload関数が行ごとにNoneキーを削除していたため送信JSONのキー集合が
+行によってバラつき、PostgRESTが`"All object keys must match"`で拒否していた問題 → 常に
+全キーを持たせ値が無い場合は`None`を明示的に入れる方式に統一。(2) JV-Dataが同じレース/馬の
+情報を複数回(出走表版→確定版等)送ってくることがあり、1バッチ内に同じconflictキーの行が
+複数あると`"ON CONFLICT DO UPDATE command cannot affect row a second time"`で失敗していた
+問題 → `dedupe_by_key()`を追加し、races/race_entriesのupsert直前に重複キーを除去(最後の
+1件を採用)するよう修正。どちらもMac側で単体テスト済み。
+
+## セットアップ (Windows PC側、fetch_raw.py/setup.py用)
+
+1. JV-Link本体をインストール・利用キー登録済みであること (`AGENTS.md`のモデル階層節参照)
+2. **32bit版のPython**をインストールする (64bit PythonからはJV-LinkのCOMサーバーを呼べず
+   `REGDB_E_CLASSNOTREG`エラーになる)
+3. `pip install -r requirements.txt` (pywin32のみ)
+4. `py -3.12-32 setup.py` を一度だけ実行し、「JV-Link設定」ダイアログで接続設定を確認・保存する
+   (バージョン番号は環境に合わせて読み替え。以降は`fetch_raw.py`実行時にこのダイアログは出ない)
+
+## 実行方法
+
+```
+python fetch_raw.py <dataspec> <fromtime> <option> <out_dir> [--fix-mojibake]
+python parse_records.py <out_dir> <parsed_out_dir>   # RA_parsed.csv / SE_parsed.csv 等を生成 (Windows側で実装、要反映)
+python load_to_supabase.py <RA_parsed.csv> <SE_parsed.csv> --env-file ../../.env.local
+```
+
+- `dataspec`: 4桁データ種別IDを連結した文字列。例: `"RACE"`
+- `fromtime`: option=1,3,4のときは`YYYYMMDDhhmmss`または`YYYYMMDDhhmmss-YYYYMMDDhhmmss`。option=2 (今週データ)のときは`"1"`固定
+- `option`: 1=通常データ(差分)、2=今週データのみ(軽量)、3/4=セットアップ(初回一括)。詳細は`AGENTS.md`の「JVOpenのoption/dataspec制約」参照
+- `load_to_supabase.py`は`NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`が必要 (`--env-file`で`.env.local`を指定するか、事前にexport)。**手動での検証実行時はWindows側に認証情報を置かず、CSVをMac側に渡してMacで実行すること。** ただし週次の完全自動実行(`run_weekly_sync.py`、下記)は無人実行が前提のため、この場合に限りWindows PCのローカルファイル(`.env.jvlink`、gitignore対象・git commit厳禁)に認証情報を置く運用を許容している(個人PC上の自動化スクリプトとしての一般的な妥協。チャットへの貼り付けやgitへのコミットとは区別すること)
+
+## run_weekly_sync.py (週次自動実行オーケストレーター、2026-07-11追加)
+
+`fetch_raw.py → parse_records.py → load_to_supabase.py` を1コマンドで順に実行する。
+Windowsタスクスケジューラから週1回呼び出す想定。
+
+**差分同期の仕組み:** `fetch_raw.py`がoption=1で成功すると、JVOpenが返す`lastfiletimestamp`を
+`out/last_sync.txt`に保存する(2026-07-11追加)。`run_weekly_sync.py`は次回実行時にこの値を
+そのまま`fromtime`として再利用するので、毎回全件取得ではなく前回以降の差分だけを取得できる。
+`last_sync.txt`が無い場合(初回)は直近7日分から開始する。
+
+**セットアップ:**
+1. `py -3.12-32 setup.py` を一度だけ手動実行し、JV-Link接続設定を済ませる(対話的なダイアログが
+   出るため`run_weekly_sync.py`には含めていない)
+2. `scripts/jvlink/.env.jvlink` を作成し、以下を書く(このファイルはgit管理対象外):
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=xxxx
+   ```
+3. 動作確認: `python run_weekly_sync.py` を手動で一度実行し、`logs/`にログが残ること・
+   Supabaseにデータが入ることを確認する
+4. 確認できたらWindowsタスクスケジューラに登録する(例):
+   ```
+   schtasks /create /tn "JVLinkWeeklySync" /sc weekly /d MON /st 06:00 ^
+     /tr "\"C:\Path\To\python.exe\" \"C:\Path\To\jvlink\run_weekly_sync.py\""
+   ```
+   (`python.exe`と`run_weekly_sync.py`の実際のパスに置き換えること。`fetch_raw.py`の呼び出しは
+   スクリプト内部で`py -3.12-32`を使うため、タスク自体は64bit Pythonで登録してよい)
+
+**⚠️ 未検証:** `run_weekly_sync.py`自体もこのリポジトリでは一度も実行できていない
+(fetch_raw.pyがWindows側の検証済み実装に未反映のため)。上記「Windows側との既知の差分」の
+reconcile後、Windows側で実際に1回通しで動作確認すること。
+
+## load_to_supabase.py の既知の制約・要検証事項
+
+**✅ 2026-07-05開催分の実データ(RA=144件・horses=1848件・race_entries=1470件、skipped=0)を
+実際にSupabaseへ投入し、以下を確認済み(2026-07-11):**
+- `odds_win`(オッズ、10倍値と仮定して/10): 同一レース内でactual_popularity(確定人気)と
+  完全に単調増加の関係にあることを確認(人気1位=最安オッズ〜人気15位=最高オッズまで矛盾なし)。
+  オッズと人気は本来表裏一体の関係のため、この一致はスケール変換が正しいことの強い裏付けになる
+- `jockey_weight_kg`(斤量、10倍値と仮定して/10): 52.0〜55.0kgという実在する範囲で取得できた
+- `track_type`(track_cdからの芝/ダート/障害判定、10番台=芝・20番台=ダート・50番台=障害という
+  想定): 実際に小倉1Rが「障害」と判定され、かつ同レースのtrack_condition=重・weather=雨という
+  内部的に矛盾のない組み合わせで取得できたことから、少なくとも50番台=障害の境界は正しいと確認
+- `weather`/`track_condition`: 複数レースで天候と馬場状態の組み合わせが実際にあり得る形
+  (雨→重、晴→良等)で一貫しており、コード変換に大きな誤りは無さそうと判断できる
+- `finish_time_sec`(タイムのMSS.d形式→秒変換): 同一レース内で着順順にタイムが単調増加して
+  いることを確認(107.3秒→122.4秒)。Windows側の実データ検証("1098"=1分09秒8)と合わせて確度が高い
+
+**まだ個別に裏取りできていないもの:**
+- `grade`(grade_cdからのG1/G2/G3判定): A/B/Cのみ対応。検証に使った2026-07-05のサンプルに
+  該当レースが無かった可能性があり、重賞レースでの確認はまだ
+- track_type境界値の詳細(10番台=芝・20番台=ダートの境界、直線/右左等の細かい違い)は
+  大枠が正しいことしか確認できていない
+
+**この検証はMac側から直接Supabaseに問い合わせて実施した(Windows側の作業は不要だった)。**
+再検証したい場合は `curl` で `${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/races` 等を叩けばよい。
+
+## 既知の制約・未検証事項 (fetch_raw.py/setup.py)
+
+- レコードの文字コードは`cp932`想定。文字化けする場合は上記「文字化け対策」を反映すること
+- Windowsタスクスケジューラでの定期実行設定は、コマンド例をREADMEに用意した段階(上記
+  「run_weekly_sync.py」参照)。実際の`schtasks`登録・動作確認はまだ
+
+## 参考にした実装例
+
+- https://zenn.dev/nozele/articles/c64e456d0c77e4 (JVInit/JVSetUIProperties/JVOpen/JVRead呼び出しパターン)
+- https://github.com/ShunMorr/JVLink-python (JVReadループの戻り値処理パターン)

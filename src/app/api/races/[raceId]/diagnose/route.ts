@@ -279,7 +279,15 @@ export async function POST(
   const { input, biasReferenceRaceId } = loaded;
 
   // 「本気診断」ボタン: standardでS評価が出たレースのみ、手動でOpusへ深掘りさせる。
+  // 未勝利・新馬戦はS評価が出てもOpusへはエスカレーションさせず、Sonnet(standard)止まりにする
+  // (新馬戦は下のscreening前スキップで元々standardにも到達しないが、念のためここでも明示的に弾く)。
   if (wantsPremium) {
+    if (input.race.race_class?.includes("未勝利") || input.race.race_class?.includes("新馬")) {
+      return NextResponse.json(
+        { error: "未勝利・新馬戦は本気診断(Opus)の対象外です" },
+        { status: 400 },
+      );
+    }
     if (input.race.race_rank !== "S") {
       return NextResponse.json(
         { error: "本気診断はS評価のレースのみ実行できます" },

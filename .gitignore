@@ -40,6 +40,14 @@ yarn-error.log*
 # supabase
 supabase/.temp
 
+# jvlink (python, JV-Dataの生データ・ライセンス上再配布不可のため)
+scripts/jvlink/out/
+scripts/jvlink/**/*.txt
+scripts/jvlink/__pycache__/
+scripts/jvlink/.venv/
+scripts/jvlink/logs/
+# .env.jvlink は上の `.env*` ルールで既にignore対象
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
