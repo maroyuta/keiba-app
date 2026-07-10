@@ -66,12 +66,15 @@ export function RecommendationList({ rows }: { rows: RecommendationRow[] }) {
       {filtered.length === 0 ? (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">該当するレースがありません。</p>
       ) : (
-        <ul className="flex flex-col divide-y divide-zinc-200 dark:divide-zinc-800">
+        <ul className="flex flex-col gap-2">
           {filtered.map((r) => (
-            <li key={r.id}>
+            <li
+              key={r.id}
+              className="rounded-lg border border-zinc-200 dark:border-zinc-800"
+            >
               <Link
                 href={`/races/${r.id}`}
-                className="flex flex-col gap-1 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                className="flex flex-col gap-1 rounded-lg p-3 hover:bg-zinc-50 dark:hover:bg-zinc-900"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">

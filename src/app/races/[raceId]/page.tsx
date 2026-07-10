@@ -158,11 +158,14 @@ export default async function RaceDiagnosisPage({
           <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400">全体分析</h2>
           <dl className="flex flex-col gap-3">
             {analysisItems.map((item) => (
-              <div key={item.label}>
+              <div
+                key={item.label}
+                className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+              >
                 <dt className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
                   {item.label}
                 </dt>
-                <dd className="mt-0.5 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+                <dd className="mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
                   {item.text}
                 </dd>
               </div>
