@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RaceRank } from "@/lib/supabase/database.types";
-import { RankBadge } from "../races/RankBadge";
 import { RoiTimeSeriesChart, type PeriodStat } from "./RoiTimeSeriesChart";
 import { RecommendationList, type RecommendationRow } from "./RecommendationList";
+import { BreakdownTable, type BreakdownGroup, type BreakdownStat } from "./BreakdownTable";
+
+const BET_TYPE_LABELS: Record<string, string> = {
+  wide: "ワイド",
+  umaren: "馬連",
+  both: "ワイド・馬連",
+};
 
 // ISO週の月曜日を週の代表日にする (日曜始まりだと月をまたいだ集計がずれやすいため)
 function startOfIsoWeek(dateStr: string): string {
@@ -39,6 +45,35 @@ function buildPeriodStats(
       roiPct: roiPct(bucket.stakeYen, bucket.returnYen),
       count: bucket.count,
     }));
+}
+
+// netkeiba「My収支」の項目別テーブル (回収率/的中率/購入金額/払戻金額/購入R数/的中R数) と同じ形式で集計する
+function buildBreakdownStats(
+  rows: Array<{ label: string; stakeYen: number; returnYen: number; isHit: boolean | null }>,
+): BreakdownStat[] {
+  const byLabel = new Map<
+    string,
+    { stakeYen: number; returnYen: number; count: number; hitCount: number }
+  >();
+  for (const row of rows) {
+    const bucket = byLabel.get(row.label) ?? { stakeYen: 0, returnYen: 0, count: 0, hitCount: 0 };
+    bucket.stakeYen += row.stakeYen;
+    bucket.returnYen += row.returnYen;
+    bucket.count += 1;
+    if (row.isHit) bucket.hitCount += 1;
+    byLabel.set(row.label, bucket);
+  }
+  return [...byLabel.entries()]
+    .map(([label, bucket]) => ({
+      label,
+      roiPct: roiPct(bucket.stakeYen, bucket.returnYen),
+      hitRatePct: bucket.count > 0 ? (bucket.hitCount / bucket.count) * 100 : 0,
+      stakeYen: bucket.stakeYen,
+      returnYen: bucket.returnYen,
+      count: bucket.count,
+      hitCount: bucket.hitCount,
+    }))
+    .sort((a, b) => b.stakeYen - a.stakeYen); // netkeibaと同じく購入金額の多い順
 }
 
 export default async function DashboardPage() {
@@ -85,19 +120,44 @@ export default async function DashboardPage() {
     })),
   );
 
-  const RANKS: RaceRank[] = ["S", "A", "B", "C"];
-  const rankStats = RANKS.map((rank) => {
-    const rows = settled.filter((r) => r.race_rank === rank);
-    const stakeYen = rows.reduce((sum, r) => sum + r.stake_yen, 0);
-    const returnYen = rows.reduce((sum, r) => sum + (r.return_yen ?? 0), 0);
-    return {
-      rank,
-      count: rows.length,
-      stakeYen,
-      returnYen,
-      roiPct: roiPct(stakeYen, returnYen),
-    };
-  }).filter((r) => r.count > 0);
+  const breakdownGroups: BreakdownGroup[] = [
+    {
+      key: "rank",
+      label: "ランク別",
+      stats: buildBreakdownStats(
+        settled.map((r) => ({
+          label: r.race_rank ?? "不明",
+          stakeYen: r.stake_yen,
+          returnYen: r.return_yen ?? 0,
+          isHit: r.is_hit,
+        })),
+      ),
+    },
+    {
+      key: "track",
+      label: "競馬場別",
+      stats: buildBreakdownStats(
+        settled.map((r) => ({
+          label: r.races.keibajo_name ?? "不明",
+          stakeYen: r.stake_yen,
+          returnYen: r.return_yen ?? 0,
+          isHit: r.is_hit,
+        })),
+      ),
+    },
+    {
+      key: "bet_type",
+      label: "買い方別",
+      stats: buildBreakdownStats(
+        settled.map((r) => ({
+          label: (r.bet_type && BET_TYPE_LABELS[r.bet_type]) ?? "不明",
+          stakeYen: r.stake_yen,
+          returnYen: r.return_yen ?? 0,
+          isHit: r.is_hit,
+        })),
+      ),
+    },
+  ];
 
   const listRows: RecommendationRow[] = settled.map((r) => ({
     id: r.race_id,
@@ -157,35 +217,8 @@ export default async function DashboardPage() {
           {/* 大まか〜細かい: 期間別の推移 (週/月/年切り替え) */}
           <RoiTimeSeriesChart week={weekStats} month={monthStats} year={yearStats} />
 
-          {/* 自信度 (S/A/B/C) ごとの回収率 */}
-          {rankStats.length > 0 && (
-            <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400">
-                自信度(ランク)別の回収率
-              </h2>
-              <div className="flex flex-col divide-y divide-zinc-200 dark:divide-zinc-800">
-                {rankStats.map((r) => (
-                  <div key={r.rank} className="flex items-center gap-3 py-2">
-                    <RankBadge rank={r.rank} />
-                    <span className="w-16 text-xs text-zinc-500 dark:text-zinc-400">
-                      {r.count}レース
-                    </span>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                      <div
-                        className={`h-full ${r.roiPct >= 100 ? "bg-emerald-500" : "bg-red-400"}`}
-                        style={{ width: `${Math.min(100, r.roiPct)}%` }}
-                      />
-                    </div>
-                    <span
-                      className={`w-14 text-right text-sm font-medium ${r.roiPct >= 100 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}
-                    >
-                      {r.roiPct.toFixed(0)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          {/* netkeiba「My収支」の項目別テーブルと同じ形式: ランク別/競馬場別/買い方別をタブで切り替え */}
+          <BreakdownTable groups={breakdownGroups} />
 
           {/* 細かい: 個別レースの一覧 (的中/外れで絞り込み、外れパターンの振り返り用) */}
           <RecommendationList rows={listRows} />
