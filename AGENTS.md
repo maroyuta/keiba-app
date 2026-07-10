@@ -8,13 +8,25 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## ⏸️ 引き継ぎ中の相談 (2026-07-10更新、ここから再開)
 
-1. **新馬戦・障害レースは診断対象外に決定・実装済み (2026-07-10)** — `route.ts`の`POST`冒頭で`race.track_type === "障害"`または`race.race_class`に"新馬"を含む場合、screening(Haiku)すら呼ばずに`{ tier: "skipped" }`を返すよう変更済み。ユーザーの月¥4,000程度に抑えたいという要望を受けての対応。**未検証:** 実際のnode/npm環境がこのセッションのサンドボックスになく`tsc`/`next build`を回せていない。次回、`npm run build`または`tsc --noEmit`で型エラーがないか確認すること
-2. **screeningでC評価が出たレースはstandardへ進めず打ち切りで確定 (2026-07-10)** — 「精度検証データを蓄積するため全レースをstandardまで回す」案は不採用。コード(`route.ts`)は元々C評価で打ち切る実装のままで、これは変更不要。**注意:** この決定はコストを追加削減するものではない(¥6,000/月・新馬障害除外後¥4,500~5,200/月の見積もりは元々この打ち切り込みの数字。「全部standardまで回す」という逆方向の変更を採用しなかっただけ)。¥4,000/月ちょうどを狙うには別のレバー(premium手動化・screening基準の厳格化等)が必要
-3. **premium(Opus)診断の実測usageを取るか?** — まだユーザーの明示的な回答待ち。Opusは高コストなので実測を取る前に確認する約束をしていた(screening/standardは実測済み、下記参照)
-4. **premium(Opus)の自動エスカレーションを廃止し、手動「本気診断」ボタンに変更・実装済み (2026-07-10)** — `route.ts`の`POST`はstandardでS評価が出ても自動ではpremiumへ進まなくなった(`return NextResponse.json({ tier: "standard", result })`で終わる)。代わりに`POST /api/races/[raceId]/diagnose?tier=premium`を新設し、`race.race_rank === "S"`のレースのみ手動でOpus診断を実行できるようにした(S以外は400エラー)。`DiagnoseButton.tsx`に`raceRank`propを追加し、S評価のレースだけ「本気診断する」ボタン(amber色)を表示するよう変更、`page.tsx`から`raceRank={race.race_rank}`を渡すよう更新。これにより「実際に買うか検討する~5レース/日」だけにOpusコストを絞れる設計になった。**未検証:** node/npm環境がこのセッションのサンドボックスになく、`tsc --noEmit`・`next build`・実ブラウザでのボタン動作確認ができていない。次回、環境がある場所でビルドと動作確認を行うこと
-   - 背景: ユーザーは当初月¥12,000のコストは払いたくない、実際に買うのは~5レース/日程度、という制約から相談を開始。今回さらに月¥4,000程度への圧縮を希望
+**このセッションで実装済み(すべてgitコミット済み、ローカルのみ・push未実施):**
 
-**✅ gitコミット済み (2026-07-10)。** それまでのセッションで実装していた内容(DBスキーマ、予想エンジン、netkeibaスクレイパー、フロントエンド、使用量ログ機構など)は`1b8e311`でコミット済み(ローカルのみ、push未実施)。
+- 新馬戦・障害レースを診断対象外化(screeningすら呼ばない)
+- screeningのC評価打ち切りは元々の実装のまま維持(コスト削減の追加効果はない、既存の見積もりに織り込み済み)
+- premium(Opus)の自動エスカレーションを廃止し、`race_rank === "S"`のレースのみ手動の「本気診断」ボタン(`POST .../diagnose?tier=premium`)で実行する方式に変更
+- オッズ妙味(エッジ)の評価ルールをプロンプトに追加(勝率の高さでなくオッズに対するエッジで本命/相手を選ぶ、人気同士の組み合わせも実際のワイド/馬連オッズ次第で妙味ありと判断してよい)
+- 血統(`horse_pedigrees`、BLOD 3代血統)・調教(`training_sessions`再設計、HC/WC準拠)・種牡馬統計(`sire_stats`/`nick_stats`に`roi_win_pct`追加)を診断プロンプトに配線
+- 回収率トラッキング用に`race_payouts`・`race_recommendation_results`テーブルを新設
+- `/dashboard`(回収率ダッシュボード)を実装。サマリーカード→週/月/年グラフ→ランク別/競馬場別/買い方別の内訳テーブル(netkeiba「My収支」と同じ列構成)→個別レース一覧(的中/外れ絞り込み)の4段階構成
+
+**次回セッションでまず確認すべきこと(優先度順):**
+
+1. **マイグレーション適用状況の確認。** `20260710070000`(血統・調教・統計の再設計)はSupabase SQL Editorで適用済みとユーザーが確認済み。**`20260710080000`(race_payouts/race_recommendation_results)と`20260710090000`(race_recommendation_results.race_rank列)は、このセッション内では適用の確認が取れていない。** 次回はまず`select table_name from information_schema.tables where table_name in ('race_payouts', 'race_recommendation_results');`で確認し、未適用ならSQL Editorで実行すること
+2. **`npm run build`(型チェック込み)がこのセッション中は一度も実行できていない。** node/npm/Supabase CLIがこのサンドボックスに一切無かったため。node環境のあるターミナルで実行し、特に以下を要チェック: `race_recommendation_results`の`races(...)`ネスト埋め込みselectの型付け(`src/app/dashboard/page.tsx`)、Tailwindの`line-clamp-1`(`RecommendationList.tsx`)
+3. **実ブラウザでの動作確認も未実施。** `/dashboard`・「本気診断する」ボタン(S評価のレースにのみ表示されるか)・新馬/障害レースでdiagnoseが`{tier: "skipped"}`を返すか、をスマホ幅で確認する
+4. **premium(Opus)診断の実測usageを取るか?** — まだユーザーの明示的な回答待ち(1回課金される)
+5. **JV-Link接続** — 最大のブロッカー。Windows PC + JRA-VAN Data Lab.契約は用意済みとユーザーから確認済みだが、着手はまだ(「今日やるなら後で」と保留中)。これが繋がるまで、上記で作った統計・回収率まわりのテーブルは全て空のまま
+
+背景: ユーザーは当初月¥12,000のコストは払いたくない、実際に買うのは~5レース/日程度、という制約から相談を開始。その後¥4,000程度への圧縮・オッズ妙味重視の予想ロジック・回収率の可視化と話が進んだ。
 
 ## 全体構成
 
