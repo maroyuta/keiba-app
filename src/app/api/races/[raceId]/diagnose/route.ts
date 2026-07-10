@@ -15,6 +15,8 @@ type SupabaseAdminClient = ReturnType<typeof createAdminClient>;
 
 // リサーチルール: 直近3走以上を精査する。余裕を持って5走分取得する。
 const PAST_PERFORMANCE_LIMIT = 5;
+// 調教評価は絶対タイムでなく直近セッションとの相対比較が目的のため、直近3回分で十分。
+const TRAINING_SESSION_LIMIT = 3;
 
 // トラックバイアスはその時の馬場状態次第のため、直近の実データを根拠にする。
 // - 日曜のレース: 前日(土曜)の同場レースを参照
@@ -114,6 +116,55 @@ async function loadRaceDiagnosisInput(
     .select("*, prediction_criteria(*)")
     .eq("race_id", raceId);
 
+  // 血統 (horse_pedigrees): 馬1頭につき1行 (1:1)
+  const { data: pedigrees } = await supabase
+    .from("horse_pedigrees")
+    .select("*")
+    .in("horse_id", horseIds);
+
+  const pedigreeByHorse = new Map<string, NonNullable<typeof pedigrees>[number]>();
+  for (const pedigree of pedigrees ?? []) {
+    pedigreeByHorse.set(pedigree.horse_id, pedigree);
+  }
+
+  // 調教 (training_sessions): 直近TRAINING_SESSION_LIMIT件/馬
+  const { data: trainingSessions } = await supabase
+    .from("training_sessions")
+    .select("*")
+    .in("horse_id", horseIds)
+    .order("training_date", { ascending: false });
+
+  const trainingByHorse = new Map<string, NonNullable<typeof trainingSessions>>();
+  for (const session of trainingSessions ?? []) {
+    const list = trainingByHorse.get(session.horse_id) ?? [];
+    if (list.length < TRAINING_SESSION_LIMIT) {
+      list.push(session);
+      trainingByHorse.set(session.horse_id, list);
+    }
+  }
+
+  // 種牡馬統計 (sire_stats) / 配合統計 (nick_stats): horses.sire_name/dam_sire_nameでテキストマッチ
+  // (種牡馬自体がhorsesに行を持つとは限らないためFKではなくtextマッチ、AGENTS.md参照)
+  // sireNamesが空でも.in()は0件で返るため、分岐せず常にクエリする。
+  const sireNames = [...new Set(entries.map((entry) => entry.horses.sire_name).filter((v): v is string => !!v))];
+
+  const { data: sireStats } = await supabase.from("sire_stats").select("*").in("sire_name", sireNames);
+  const sireStatsByName = new Map<string, NonNullable<typeof sireStats>>();
+  for (const stat of sireStats ?? []) {
+    const list = sireStatsByName.get(stat.sire_name) ?? [];
+    list.push(stat);
+    sireStatsByName.set(stat.sire_name, list);
+  }
+
+  const { data: nickStats } = await supabase.from("nick_stats").select("*").in("sire_name", sireNames);
+  const nickStatsByPair = new Map<string, NonNullable<typeof nickStats>>();
+  for (const stat of nickStats ?? []) {
+    const key = `${stat.sire_name}::${stat.dam_sire_name}`;
+    const list = nickStatsByPair.get(key) ?? [];
+    list.push(stat);
+    nickStatsByPair.set(key, list);
+  }
+
   const biasReference = await findBiasReferenceRace(supabase, race);
 
   return {
@@ -127,6 +178,12 @@ async function loadRaceDiagnosisInput(
           ...cs,
           criteria: cs.prediction_criteria,
         })),
+        pedigree: pedigreeByHorse.get(entry.horse_id) ?? null,
+        trainingSessions: trainingByHorse.get(entry.horse_id) ?? [],
+        sireStats: entry.horses.sire_name ? (sireStatsByName.get(entry.horses.sire_name) ?? []) : [],
+        nickStats: entry.horses.sire_name && entry.horses.dam_sire_name
+          ? (nickStatsByPair.get(`${entry.horses.sire_name}::${entry.horses.dam_sire_name}`) ?? [])
+          : [],
       })),
       raceCriteriaScores: (raceCriteriaScores ?? []).map((rc) => ({
         ...rc,

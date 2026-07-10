@@ -1,6 +1,10 @@
 import type {
   RaceRow,
   HorseRow,
+  HorsePedigreeRow,
+  TrainingSessionRow,
+  SireStatRow,
+  NickStatRow,
   RaceEntryRow,
   PastPerformanceRow,
   RaceEntryCriteriaScoreRow,
@@ -14,6 +18,10 @@ export interface EntryDiagnosisInput {
   horse: HorseRow;
   pastPerformances: PastPerformanceRow[];
   criteriaScores: Array<RaceEntryCriteriaScoreRow & { criteria: PredictionCriteriaRow }>;
+  pedigree: HorsePedigreeRow | null;
+  trainingSessions: TrainingSessionRow[];
+  sireStats: SireStatRow[];
+  nickStats: NickStatRow[];
 }
 
 export interface BiasReferenceRace {
@@ -86,6 +94,18 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
 6. コース×距離ごとの枠順データ評価: 例えば阪神芝1200mは外枠有利、のようなコース特性ごとの枠順傾向
 
 データに拡張予想軸 (criteria_scores) が含まれる場合は、それらも評価に織り込むこと。
+
+## 血統・調教データの扱い
+
+- **血統 (pedigree)**: 3代血統 (父・母・父父・父母・母父・母母・父父父〜母母母の14頭) が入っている場合、
+  距離適性・馬場適性・早熟晩成傾向の判断材料にする。同じ祖先が複数箇所に出てくる場合はインブリードとして
+  注記してよい。sire_stats/nick_stats (該当する父・父×母父の距離帯/馬場/コース別成績、starts件数と
+  roi_win_pct(単勝回収率、100が収支トントン)を含む) がある場合はそれも判断材料にするが、starts件数が
+  少ない(目安10未満)統計は参考程度に留め、断定的な根拠にしない
+- **調教 (training_sessions)**: 絶対タイムでの閾値判定はしない。同じ馬の直近セッション同士の相対比較
+  (自己ベース比で今回は良化/悪化しているか) を基本にする。lap_times_secはゴール手前メートル数をキーにした
+  ラップタイムなので、末脚(200/400地点)のタイムに注目するとよい。厩舎(trainer_name)の「本気パターン」との
+  比較データがある場合はそれも使うが、無い場合は自己ベース比だけで判断し、無理に決めつけない
 
 ## リサーチルール
 
@@ -272,6 +292,54 @@ function serializePastPerformance(pp: PastPerformanceRow) {
   };
 }
 
+function serializePedigree(pedigree: HorsePedigreeRow | null) {
+  if (!pedigree) return null;
+  return {
+    sire_name: pedigree.sire_name,
+    dam_name: pedigree.dam_name,
+    sire_sire_name: pedigree.sire_sire_name,
+    sire_dam_name: pedigree.sire_dam_name,
+    dam_sire_name: pedigree.dam_sire_name,
+    dam_dam_name: pedigree.dam_dam_name,
+    sire_sire_sire_name: pedigree.sire_sire_sire_name,
+    sire_sire_dam_name: pedigree.sire_sire_dam_name,
+    sire_dam_sire_name: pedigree.sire_dam_sire_name,
+    sire_dam_dam_name: pedigree.sire_dam_dam_name,
+    dam_sire_sire_name: pedigree.dam_sire_sire_name,
+    dam_sire_dam_name: pedigree.dam_sire_dam_name,
+    dam_dam_sire_name: pedigree.dam_dam_sire_name,
+    dam_dam_dam_name: pedigree.dam_dam_dam_name,
+  };
+}
+
+function serializeTrainingSession(session: TrainingSessionRow) {
+  return {
+    training_date: session.training_date,
+    training_type: session.training_type,
+    facility: session.facility,
+    course_code: session.course_code,
+    turn_direction: session.turn_direction,
+    lap_times_sec: session.lap_times_sec,
+    total_time_sec: session.total_time_sec,
+    awase_uma: session.awase_uma,
+    awase_result: session.awase_result,
+    ashi_iro: session.ashi_iro,
+    evaluator_comment: session.evaluator_comment,
+  };
+}
+
+function serializePedigreeStat(stat: SireStatRow | NickStatRow) {
+  return {
+    stat_category: stat.stat_category,
+    stat_key: stat.stat_key,
+    starts: stat.starts,
+    wins: stat.wins,
+    win_rate: stat.win_rate,
+    place_rate: stat.place_rate,
+    roi_win_pct: stat.roi_win_pct,
+  };
+}
+
 function serializeCriteriaScore(
   cs: { criteria: PredictionCriteriaRow; score: number | null; rank_mark: string | null; reason: string | null },
 ) {
@@ -297,6 +365,10 @@ function serializeEntry(input: EntryDiagnosisInput) {
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
     past_performances: input.pastPerformances.map(serializePastPerformance),
+    pedigree: serializePedigree(input.pedigree),
+    training_sessions: input.trainingSessions.map(serializeTrainingSession),
+    sire_stats: input.sireStats.map(serializePedigreeStat),
+    nick_stats: input.nickStats.map(serializePedigreeStat),
     criteria_scores: input.criteriaScores.map(serializeCriteriaScore),
   };
 }
