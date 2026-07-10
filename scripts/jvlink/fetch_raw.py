@@ -55,6 +55,16 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
 
     open_ret = jvlink.JVOpen(dataspec, fromtime, option, 0, 0, "")
     errcode, readcount, downloadcount, lastfiletimestamp = open_ret
+    if errcode == -1 and option == 1:
+        # 公式のJVOpenエラーコード一覧(-100番台以降)には無い値。実機で調査した結果、
+        # fromtimeに前回同期時のlastfiletimestampと全く同じ値を渡す(=差分なし)と
+        # このコードが返ることを確認した。差分同期では毎回起こり得る正常系として扱う。
+        print(
+            f"[JVOpen] 新規データなし (fromtime={fromtime}は前回の同期地点と同じため差分なし)",
+            file=sys.stderr,
+        )
+        jvlink.JVClose()
+        return
     if errcode < 0:
         raise RuntimeError(f"JVOpen failed: errcode={errcode}")
 
