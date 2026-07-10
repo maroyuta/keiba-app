@@ -123,6 +123,80 @@ export type Database = {
         }
         Relationships: []
       }
+      horse_pedigrees: {
+        Row: {
+          created_at: string
+          dam_dam_dam_name: string | null
+          dam_dam_name: string | null
+          dam_dam_sire_name: string | null
+          dam_name: string | null
+          dam_sire_dam_name: string | null
+          dam_sire_name: string | null
+          dam_sire_sire_name: string | null
+          data_source: string
+          horse_id: string
+          id: string
+          sire_dam_dam_name: string | null
+          sire_dam_name: string | null
+          sire_dam_sire_name: string | null
+          sire_name: string | null
+          sire_sire_dam_name: string | null
+          sire_sire_name: string | null
+          sire_sire_sire_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dam_dam_dam_name?: string | null
+          dam_dam_name?: string | null
+          dam_dam_sire_name?: string | null
+          dam_name?: string | null
+          dam_sire_dam_name?: string | null
+          dam_sire_name?: string | null
+          dam_sire_sire_name?: string | null
+          data_source?: string
+          horse_id: string
+          id?: string
+          sire_dam_dam_name?: string | null
+          sire_dam_name?: string | null
+          sire_dam_sire_name?: string | null
+          sire_name?: string | null
+          sire_sire_dam_name?: string | null
+          sire_sire_name?: string | null
+          sire_sire_sire_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dam_dam_dam_name?: string | null
+          dam_dam_name?: string | null
+          dam_dam_sire_name?: string | null
+          dam_name?: string | null
+          dam_sire_dam_name?: string | null
+          dam_sire_name?: string | null
+          dam_sire_sire_name?: string | null
+          data_source?: string
+          horse_id?: string
+          id?: string
+          sire_dam_dam_name?: string | null
+          sire_dam_name?: string | null
+          sire_dam_sire_name?: string | null
+          sire_name?: string | null
+          sire_sire_dam_name?: string | null
+          sire_sire_name?: string | null
+          sire_sire_sire_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "horse_pedigrees_horse_id_fkey"
+            columns: ["horse_id"]
+            isOneToOne: true
+            referencedRelation: "horses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nick_stats: {
         Row: {
           as_of_date: string | null
@@ -131,8 +205,11 @@ export type Database = {
           data_source: string
           id: string
           place_rate: number | null
+          roi_win_pct: number | null
           sire_name: string
           starts: number | null
+          stat_category: string
+          stat_key: string
           updated_at: string
           win_rate: number | null
           wins: number | null
@@ -144,8 +221,11 @@ export type Database = {
           data_source: string
           id?: string
           place_rate?: number | null
+          roi_win_pct?: number | null
           sire_name: string
           starts?: number | null
+          stat_category: string
+          stat_key: string
           updated_at?: string
           win_rate?: number | null
           wins?: number | null
@@ -157,8 +237,11 @@ export type Database = {
           data_source?: string
           id?: string
           place_rate?: number | null
+          roi_win_pct?: number | null
           sire_name?: string
           starts?: number | null
+          stat_category?: string
+          stat_key?: string
           updated_at?: string
           win_rate?: number | null
           wins?: number | null
@@ -664,6 +747,7 @@ export type Database = {
           data_source: string
           id: string
           place_rate: number | null
+          roi_win_pct: number | null
           sire_name: string
           starts: number | null
           stat_category: string
@@ -678,6 +762,7 @@ export type Database = {
           data_source: string
           id?: string
           place_rate?: number | null
+          roi_win_pct?: number | null
           sire_name: string
           starts?: number | null
           stat_category: string
@@ -692,6 +777,7 @@ export type Database = {
           data_source?: string
           id?: string
           place_rate?: number | null
+          roi_win_pct?: number | null
           sire_name?: string
           starts?: number | null
           stat_category?: string
@@ -707,48 +793,60 @@ export type Database = {
           ashi_iro: string | null
           awase_result: string | null
           awase_uma: string | null
-          course_type: string | null
+          course_code: string | null
           created_at: string
           data_source: string
           evaluator_comment: string | null
           facility: string | null
           horse_id: string
           id: string
-          time_interval: string | null
-          time_sec: number | null
+          lap_times_sec: Json
+          total_time_sec: number | null
+          trainer_name: string | null
           training_date: string
+          training_time: string | null
+          training_type: string
+          turn_direction: string | null
           updated_at: string
         }
         Insert: {
           ashi_iro?: string | null
           awase_result?: string | null
           awase_uma?: string | null
-          course_type?: string | null
+          course_code?: string | null
           created_at?: string
-          data_source: string
+          data_source?: string
           evaluator_comment?: string | null
           facility?: string | null
           horse_id: string
           id?: string
-          time_interval?: string | null
-          time_sec?: number | null
+          lap_times_sec: Json
+          total_time_sec?: number | null
+          trainer_name?: string | null
           training_date: string
+          training_time?: string | null
+          training_type: string
+          turn_direction?: string | null
           updated_at?: string
         }
         Update: {
           ashi_iro?: string | null
           awase_result?: string | null
           awase_uma?: string | null
-          course_type?: string | null
+          course_code?: string | null
           created_at?: string
           data_source?: string
           evaluator_comment?: string | null
           facility?: string | null
           horse_id?: string
           id?: string
-          time_interval?: string | null
-          time_sec?: number | null
+          lap_times_sec?: Json
+          total_time_sec?: number | null
+          trainer_name?: string | null
           training_date?: string
+          training_time?: string | null
+          training_type?: string
+          turn_direction?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -915,19 +1013,15 @@ export type BlinkersChange = "新規" | "継続" | "解除";
 export type PaceMark = "S" | "M" | "H";
 export type DataSource = "jv_link" | "netkeiba";
 export type CriteriaTargetLevel = "race" | "entry";
-export type TrainingCourseType =
-  | "坂路"
-  | "ウッドチップ"
-  | "ダート"
-  | "芝"
-  | "プール"
-  | "その他";
+export type TrainingType = "坂路" | "ウッドチップ";
+export type Facility = "美浦" | "栗東";
 export type SireStatCategory = "distance_band" | "track_type" | "course";
 export type UsageLogTier = "screening" | "standard" | "premium";
 
 // テーブル別Row型の別名 (Tables<"races"> 等の代わりに使える短縮形)
 export type RaceRow = Tables<"races">;
 export type HorseRow = Tables<"horses">;
+export type HorsePedigreeRow = Tables<"horse_pedigrees">;
 export type RaceEntryRow = Tables<"race_entries">;
 export type PastPerformanceRow = Tables<"past_performances">;
 export type PredictionCriteriaRow = Tables<"prediction_criteria">;
