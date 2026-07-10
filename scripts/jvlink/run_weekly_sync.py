@@ -68,7 +68,10 @@ def main() -> None:
     with open(log_path, "w", encoding="utf-8") as log:
         print(f"[週次同期開始] fromtime={fromtime}", file=log, flush=True)
         try:
-            run(["py", PY32_TAG, "fetch_raw.py", "RACE", fromtime, "1", str(OUT_DIR)], log)
+            run(
+                ["py", PY32_TAG, "fetch_raw.py", "RACE", fromtime, "1", str(OUT_DIR), "--fix-mojibake"],
+                log,
+            )
             run([sys.executable, "parse_records.py", str(OUT_DIR), str(OUT_DIR)], log)
             run(
                 [
