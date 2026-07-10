@@ -675,6 +675,7 @@ export type Database = {
           id: string
           is_hit: boolean | null
           race_id: string
+          race_rank: string | null
           return_yen: number | null
           roi_pct: number | null
           stake_yen: number | null
@@ -689,6 +690,7 @@ export type Database = {
           id?: string
           is_hit?: boolean | null
           race_id: string
+          race_rank?: string | null
           return_yen?: number | null
           roi_pct?: number | null
           stake_yen?: number | null
@@ -703,6 +705,7 @@ export type Database = {
           id?: string
           is_hit?: boolean | null
           race_id?: string
+          race_rank?: string | null
           return_yen?: number | null
           roi_pct?: number | null
           stake_yen?: number | null
