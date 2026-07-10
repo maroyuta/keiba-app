@@ -208,17 +208,32 @@ async function persistDiagnosis(
 }
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ raceId: string }> },
 ) {
   const { raceId } = await context.params;
   const supabase = createAdminClient();
+  const wantsPremium = new URL(request.url).searchParams.get("tier") === "premium";
 
   const loaded = await loadRaceDiagnosisInput(supabase, raceId);
   if (!loaded) {
     return NextResponse.json({ error: "race not found" }, { status: 404 });
   }
   const { input, biasReferenceRaceId } = loaded;
+
+  // 「本気診断」ボタン: standardでS評価が出たレースのみ、手動でOpusへ深掘りさせる。
+  if (wantsPremium) {
+    if (input.race.race_rank !== "S") {
+      return NextResponse.json(
+        { error: "本気診断はS評価のレースのみ実行できます" },
+        { status: 400 },
+      );
+    }
+    const premium = await diagnoseRacePremium(input);
+    await logUsage(supabase, raceId, "premium", premium.usage);
+    await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId);
+    return NextResponse.json({ tier: "premium", result: premium.result });
+  }
 
   // 障害レース・新馬戦はコスト対象外 (screeningのHaiku呼び出しすら行わない)。
   if (input.race.track_type === "障害") {
@@ -247,17 +262,10 @@ export async function POST(
     });
   }
 
-  // 標準診断 (Sonnet)。ここでS評価が出た場合のみ「本気で買う」レースとしてOpusへ再診断させる。
-  let diagnosis = await diagnoseRaceStandard(input);
+  // 標準診断 (Sonnet)。S評価が出ても自動ではOpusへ進まず、「本気診断」ボタンの手動実行に委ねる。
+  const diagnosis = await diagnoseRaceStandard(input);
   await logUsage(supabase, raceId, "standard", diagnosis.usage);
-  let tier: "standard" | "premium" = "standard";
-  if (diagnosis.result.race_rank === "S") {
-    diagnosis = await diagnoseRacePremium(input);
-    await logUsage(supabase, raceId, "premium", diagnosis.usage);
-    tier = "premium";
-  }
-
   await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId);
 
-  return NextResponse.json({ tier, result: diagnosis.result });
+  return NextResponse.json({ tier: "standard", result: diagnosis.result });
 }

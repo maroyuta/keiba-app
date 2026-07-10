@@ -77,7 +77,11 @@ export default async function RaceDiagnosisPage({
             {race.bias_note}
           </p>
         )}
-        <DiagnoseButton raceId={race.id} hasResult={race.race_rank !== null} />
+        <DiagnoseButton
+          raceId={race.id}
+          hasResult={race.race_rank !== null}
+          raceRank={race.race_rank as RaceRank | null}
+        />
       </header>
 
       {race.honmei_horse_number && (
