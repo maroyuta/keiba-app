@@ -621,6 +621,103 @@ export type Database = {
           },
         ]
       }
+      race_payouts: {
+        Row: {
+          bet_type: string
+          combination: string
+          created_at: string
+          data_source: string
+          id: string
+          payout_yen: number
+          popularity: number | null
+          race_id: string
+          updated_at: string
+        }
+        Insert: {
+          bet_type: string
+          combination: string
+          created_at?: string
+          data_source?: string
+          id?: string
+          payout_yen: number
+          popularity?: number | null
+          race_id: string
+          updated_at?: string
+        }
+        Update: {
+          bet_type?: string
+          combination?: string
+          created_at?: string
+          data_source?: string
+          id?: string
+          payout_yen?: number
+          popularity?: number | null
+          race_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "race_payouts_race_id_fkey"
+            columns: ["race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      race_recommendation_results: {
+        Row: {
+          aite_horse_number: number | null
+          bet_type: string | null
+          computed_at: string | null
+          created_at: string
+          honmei_horse_number: number | null
+          id: string
+          is_hit: boolean | null
+          race_id: string
+          return_yen: number | null
+          roi_pct: number | null
+          stake_yen: number | null
+          updated_at: string
+        }
+        Insert: {
+          aite_horse_number?: number | null
+          bet_type?: string | null
+          computed_at?: string | null
+          created_at?: string
+          honmei_horse_number?: number | null
+          id?: string
+          is_hit?: boolean | null
+          race_id: string
+          return_yen?: number | null
+          roi_pct?: number | null
+          stake_yen?: number | null
+          updated_at?: string
+        }
+        Update: {
+          aite_horse_number?: number | null
+          bet_type?: string | null
+          computed_at?: string | null
+          created_at?: string
+          honmei_horse_number?: number | null
+          id?: string
+          is_hit?: boolean | null
+          race_id?: string
+          return_yen?: number | null
+          roi_pct?: number | null
+          stake_yen?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "race_recommendation_results_race_id_fkey"
+            columns: ["race_id"]
+            isOneToOne: true
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       races: {
         Row: {
           aite_horse_number: number | null
@@ -1008,6 +1105,15 @@ export type TrackCondition = "良" | "稍重" | "重" | "不良";
 export type TurnDirection = "右" | "左";
 export type RaceRank = "S" | "A" | "B" | "C";
 export type BetType = "wide" | "umaren" | "both";
+export type PayoutBetType =
+  | "win"
+  | "place"
+  | "wakuren"
+  | "umaren"
+  | "wide"
+  | "umatan"
+  | "sanrenpuku"
+  | "sanrentan";
 export type Sex = "牡" | "牝" | "セ";
 export type BlinkersChange = "新規" | "継続" | "解除";
 export type PaceMark = "S" | "M" | "H";
@@ -1031,3 +1137,5 @@ export type TrainingSessionRow = Tables<"training_sessions">;
 export type SireStatRow = Tables<"sire_stats">;
 export type NickStatRow = Tables<"nick_stats">;
 export type ApiUsageLogRow = Tables<"api_usage_log">;
+export type RacePayoutRow = Tables<"race_payouts">;
+export type RaceRecommendationResultRow = Tables<"race_recommendation_results">;
