@@ -74,6 +74,15 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
         file=sys.stderr,
     )
 
+    # 差分同期では各実行のout/を「今回取得した分だけ」に保ちたい。ファイルを追記(mode="a")で
+    # 開くため、掃除しないと実行のたびにRA.txt等へ累積し、後段のパース/upsert対象が全履歴へ
+    # 際限なく膨らむ。JVOpen成功(=今回書き込む分がある)時点で、前回までのレコードtxtを消す。
+    # last_sync.txt(差分同期の状態)は残す。JVOpenが-1(新規データなし)の場合はこの手前で
+    # returnしているので、その回はstaleなtxtを残して後段が前回分を再処理できる。
+    for stale in out_dir.glob("*.txt"):
+        if stale.name != "last_sync.txt":
+            stale.unlink()
+
     # ダウンロードが必要な分がある場合、JVStatusで完了を待つ。
     while downloadcount > 0:
         status = jvlink.JVStatus()
@@ -105,10 +114,14 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
                 data = fix_mojibake(data)
             record_id = data[:2]
             if record_id not in file_handles:
+                # newline="" でテキストモードの改行変換(\n→\r\n)を無効化する。これをしないと
+                # JVレコードが末尾に持つ\r\nが\r\r\nに化け、さらに下のwriteの\nと合わさって
+                # レコードごとに余分な空行と\rが混入する(パース自体はrstripで吸収できるが不健全)。
                 file_handles[record_id] = open(
-                    out_dir / f"{record_id}.txt", "a", encoding="cp932", errors="replace"
+                    out_dir / f"{record_id}.txt", "a", encoding="cp932", errors="replace", newline=""
                 )
-            file_handles[record_id].write(data + "\n")
+            # JVレコードは末尾に区切りの\r\nを含むので、一旦落としてから1つだけ\nを付ける。
+            file_handles[record_id].write(data.rstrip("\r\n") + "\n")
             total_records += 1
 
             if total_records % 1000 == 0:
