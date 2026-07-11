@@ -221,7 +221,51 @@ def parse_jg(data: bytes) -> dict:
     return d
 
 
-PARSERS = {"RA": parse_ra, "SE": parse_se, "JG": parse_jg}
+def _parse_pay_group(c: ByteCursor, count: int, combo_len: int, ninki_len: int):
+    """PAY_INFO1〜4共通の(組番/馬番, 払戻金9桁, 人気順)の繰り返し項目を切り出す。"""
+    combinations, payouts, ninkis = [], [], []
+    for _ in range(count):
+        combinations.append(c.take(combo_len))
+        payouts.append(c.take(9))
+        ninkis.append(c.take(ninki_len))
+    return combinations, payouts, ninkis
+
+
+def _add_pay_group(d: dict, prefix: str, c: ByteCursor, count: int, combo_len: int, ninki_len: int):
+    combinations, payouts, ninkis = _parse_pay_group(c, count, combo_len, ninki_len)
+    _flatten_list(d, f"{prefix}_combination", combinations)
+    _flatten_list(d, f"{prefix}_payout_yen", payouts)
+    _flatten_list(d, f"{prefix}_ninki", ninkis)
+
+
+def parse_hr(data: bytes) -> dict:
+    """JV_HR_PAY(払戻情報)。組番/馬番・払戻金(円)・人気順を賭式ごとにフラット化して格納する。"""
+    c = ByteCursor(data)
+    d = {}
+    parse_record_id(c, d)
+    parse_race_id(c, d)
+    d["toroku_tosu"] = c.take(2)
+    d["syusso_tosu"] = c.take(2)
+    _flatten_list(d, "fuseiritu_flag", [c.take(1) for _ in range(9)])
+    _flatten_list(d, "tokubarai_flag", [c.take(1) for _ in range(9)])
+    _flatten_list(d, "henkan_flag", [c.take(1) for _ in range(9)])
+    _flatten_list(d, "henkan_uma", [c.take(1) for _ in range(28)])
+    _flatten_list(d, "henkan_waku", [c.take(1) for _ in range(8)])
+    _flatten_list(d, "henkan_do_waku", [c.take(1) for _ in range(8)])
+
+    _add_pay_group(d, "tansho", c, 3, 2, 2)      # 単勝
+    _add_pay_group(d, "fukusho", c, 5, 2, 2)     # 複勝
+    _add_pay_group(d, "wakuren", c, 3, 2, 2)     # 枠連
+    _add_pay_group(d, "umaren", c, 3, 4, 3)      # 馬連
+    _add_pay_group(d, "wide", c, 7, 4, 3)        # ワイド
+    _parse_pay_group(c, 3, 4, 3)                 # 予備(未使用、バイト位置合わせのため読み捨て)
+    _add_pay_group(d, "umatan", c, 6, 4, 3)      # 馬単
+    _add_pay_group(d, "sanrenpuku", c, 3, 6, 3)  # 3連複
+    _add_pay_group(d, "sanrentan", c, 6, 6, 4)   # 3連単
+    return d
+
+
+PARSERS = {"RA": parse_ra, "SE": parse_se, "JG": parse_jg, "HR": parse_hr}
 
 
 def read_lines(path: str):

@@ -8,21 +8,21 @@ JV-Link COMに依存しない(標準ライブラリのみ使用)ため、Mac/Win
 - 環境変数 NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が設定されていること
   (.env.localと同じ値。--env-fileオプションでファイルから読み込むことも可能)
 
-⚠️ 未検証のJV-Dataコード変換について (2026-07-11時点):
-このスクリプトが行っているコード変換のうち、以下は実データでの裏取りがまだ済んでいない
-(実際のレース結果と突き合わせた検証が未実施)。本番投入前に、既知のレース(例:
-2026-07-05の完了済みレース)で変換結果が実態と合っているか確認すること。
-- track_type (track_cdからの芝/ダート/障害判定): 一般に10番台=芝、20番台=ダート、
-  50番台=障害という構造だと想定しているが、正確な境界値はJV-Data仕様書での確認が必要
-- grade (grade_cdからのG1/G2/G3判定): A/B/Cのみ対応、それ以外は生コードを保持
-- weather (tenko_cdからの天候判定)・track_condition (baba_cdからの馬場状態判定)
-- odds_win・jockey_weight_kg のスケール (10倍値と仮定して/10している)
-一方、finish_time_sec (タイムのMSS.d形式からの秒変換) はWindows側で実データ検証済み
-("1098" = 1分09秒8 = 69.8秒) のためこの変換のみ高い確度がある。
+✅ JV-Dataコード変換の実データ検証について (2026-07-11):
+track_type/grade/weather/track_condition/odds_win/jockey_weight_kg/finish_time_secは、
+小倉11R「北九州記念」(G3、2026-07-05、race_id=202610020411)をnetkeibaの結果ページと
+突き合わせ、出走13頭全頭・レース情報ともに完全一致することを確認済み(詳細は
+scripts/jvlink/README.mdの「load_to_supabase.pyの既知の制約・要検証事項」参照)。
+唯一、horse_weight_diff_kgは実際の増減0kgのケースを計測不能(None)と区別できていない
+軽微な既知の粗が残っている(回収率計算には影響しない)。
 
 JG(競走馬除外情報)は現状このスクリプトでは扱わない。race_entriesスキーマに
 「除外」を表す適切な列が無く、is_kesshi/kesshi_reasonは別目的(診断ロジックの消し判定)の
 列のため、意味を混同しないよう意図的に未対応としている。
+
+HR(払戻情報)は`--hr-csv`で任意指定すると`race_payouts`へupsertする。race_idの解決は
+このスクリプト内で行ったraces upsertの結果を優先し、無ければSupabaseへ`jv_race_key`で
+問い合わせて解決する(HR_parsed.csv単体で走らせても動くようにするため)。
 """
 
 import argparse
@@ -31,6 +31,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # JRA場コード (JV-Data race_jyo_cd)。この対応表は業界標準でよく知られており確度が高い。
@@ -50,6 +51,19 @@ BABA_NAMES = {"1": "良", "2": "稍重", "3": "重", "4": "不良"}
 
 # JV-Dataグレードコード (RA.grade_cd)。A/B/Cのみ確度が高い。他は未対応。
 GRADE_NAMES = {"A": "G1", "B": "G2", "C": "G3"}
+
+# HR_parsed.csvの賭式ごとの列プレフィックス -> (race_payouts.bet_type, 件数, 馬番の桁数, 組み合わせの頭数)
+# 件数・桁数はparse_records.pyのparse_hr()(JV_HR_PAY構造体準拠)と対応させている。
+PAYOUT_GROUPS = {
+    "tansho": ("win", 3, 2, 1),
+    "fukusho": ("place", 5, 2, 1),
+    "wakuren": ("wakuren", 3, 1, 2),
+    "umaren": ("umaren", 3, 2, 2),
+    "wide": ("wide", 7, 2, 2),
+    "umatan": ("umatan", 6, 2, 2),
+    "sanrenpuku": ("sanrenpuku", 3, 2, 3),
+    "sanrentan": ("sanrentan", 6, 2, 3),
+}
 
 
 def load_env_file(path: str) -> None:
@@ -182,6 +196,39 @@ def build_entry_payload(row: dict, race_id: str, horse_id: str) -> dict:
     return payload
 
 
+def _format_combination(raw: str, num_width: int, num_parts: int) -> "str | None":
+    raw = (raw or "").strip()
+    if len(raw) != num_width * num_parts:
+        return None
+    numbers = [raw[i : i + num_width] for i in range(0, len(raw), num_width)]
+    if not all(n.strip() for n in numbers):
+        return None
+    return "-".join(str(int(n)) for n in numbers)
+
+
+def build_payout_payloads(row: dict, race_id: str) -> list:
+    payloads = []
+    for prefix, (bet_type, count, num_width, num_parts) in PAYOUT_GROUPS.items():
+        for i in range(1, count + 1):
+            combination = _format_combination(
+                row.get(f"{prefix}_combination{i}", ""), num_width, num_parts
+            )
+            payout_yen = to_int(row.get(f"{prefix}_payout_yen{i}", ""))
+            if combination is None or payout_yen is None:
+                continue
+            payloads.append(
+                {
+                    "race_id": race_id,
+                    "bet_type": bet_type,
+                    "combination": combination,
+                    "payout_yen": payout_yen,
+                    "popularity": to_int(row.get(f"{prefix}_ninki{i}", "")),
+                    "data_source": "jv_link",
+                }
+            )
+    return payloads
+
+
 def dedupe_by_key(payloads: list, key_fn) -> list:
     """同じconflictキーが1バッチ内に複数あるとPostgRESTのON CONFLICTがエラーになるため、
     最後に出現したものを採用して重複を除く(JV-Dataは同じレースを複数回送ってくることがある)。"""
@@ -195,6 +242,19 @@ class SupabaseClient:
     def __init__(self, url: str, service_role_key: str):
         self.base_url = url.rstrip("/") + "/rest/v1"
         self.key = service_role_key
+
+    def select(self, table: str, params: dict) -> list:
+        query = urllib.parse.urlencode(params)
+        req = urllib.request.Request(
+            f"{self.base_url}/{table}?{query}",
+            headers={"apikey": self.key, "Authorization": f"Bearer {self.key}"},
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"{table}への問い合わせ失敗 ({e.code}): {body}") from e
 
     def upsert(self, table: str, rows: list, on_conflict: str) -> list:
         if not rows:
@@ -228,6 +288,7 @@ def main() -> None:
     parser.add_argument("ra_csv", help="RA_parsed.csvのパス")
     parser.add_argument("se_csv", help="SE_parsed.csvのパス")
     parser.add_argument("--env-file", help=".env.local等のパス (指定時は環境変数より優先しない)")
+    parser.add_argument("--hr-csv", help="HR_parsed.csv(払戻情報)のパス。指定時はrace_payoutsへupsertする")
     args = parser.parse_args()
 
     if args.env_file:
@@ -297,6 +358,50 @@ def main() -> None:
         "race_entries", entry_payloads, on_conflict="race_id,horse_number"
     )
     print(f"[race_entries] {len(entry_results)}件 upsert完了 (skipped={skipped})", file=sys.stderr)
+
+    if args.hr_csv:
+        if not os.path.exists(args.hr_csv):
+            print(f"[race_payouts] {args.hr_csv} が見つからないためスキップ", file=sys.stderr)
+        else:
+            with open(args.hr_csv, encoding="utf-8") as f:
+                hr_rows = list(csv.DictReader(f))
+            print(f"[読み込み] HR={len(hr_rows)}件", file=sys.stderr)
+
+            # 今回のraces upsertで解決できなかったキーは、jv_race_keyで問い合わせて補完する
+            # (HR_parsed.csv単体で走らせるケースにも対応するため)
+            missing_keys = {
+                build_jv_race_key(r) for r in hr_rows
+            } - race_id_by_key.keys()
+            if missing_keys:
+                lookup = client.select(
+                    "races",
+                    {
+                        "jv_race_key": f"in.({','.join(sorted(missing_keys))})",
+                        "select": "id,jv_race_key",
+                    },
+                )
+                for r in lookup:
+                    race_id_by_key[r["jv_race_key"]] = r["id"]
+
+            payout_payloads = []
+            payout_skipped = 0
+            for row in hr_rows:
+                race_id = race_id_by_key.get(build_jv_race_key(row))
+                if not race_id:
+                    payout_skipped += 1
+                    continue
+                payout_payloads.extend(build_payout_payloads(row, race_id))
+
+            payout_payloads = dedupe_by_key(
+                payout_payloads, lambda p: (p["race_id"], p["bet_type"], p["combination"])
+            )
+            payout_results = client.upsert(
+                "race_payouts", payout_payloads, on_conflict="race_id,bet_type,combination"
+            )
+            print(
+                f"[race_payouts] {len(payout_results)}件 upsert完了 (skipped={payout_skipped})",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":

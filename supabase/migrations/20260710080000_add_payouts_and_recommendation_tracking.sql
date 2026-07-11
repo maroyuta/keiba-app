@@ -9,9 +9,10 @@
 
 -- ------------------------------------------------------------
 -- race_payouts: レース確定後の実際の払戻金(公式配当)
--- 要確認: JV-Dataの配当情報レコード種別(仕様書上の正式なレコードID・フィールド構成)は
--- 未調査。SLOP/WOOD/BLODと同様に次回JV-Data仕様書で確認すること。ここでは一般的な
--- 中央競馬の払戻区分に基づいて設計している。
+-- ✅ 2026-07-11: JV-Dataの配当情報レコード(HR, JV_HR_PAY構造体)のバイトオフセットを
+-- JVData_Struct.csで確認し、scripts/jvlink/parse_records.pyのparse_hr()で実装済み。
+-- scripts/jvlink/load_to_supabase.pyの--hr-csvオプションでこのテーブルへupsertする
+-- (combination/payout_yenはnetkeiba実データと完全一致を確認済み。詳細はscripts/jvlink/README.md参照)。
 -- ------------------------------------------------------------
 create table race_payouts (
   id uuid primary key default gen_random_uuid(),
@@ -47,8 +48,8 @@ create policy "Authenticated users can read race_payouts" on race_payouts
 -- race_recommendation_results: 診断が出したhonmei/aite推奨が、確定後に
 -- 実際どうだったか。races.honmei_horse_number等は再診断のたびに上書きされうるため、
 -- 「その時点で実際に賭けた想定の推奨」を別途スナップショットとして残す。
--- レース確定後、race_payoutsと突き合わせて的中・回収率を計算するバッチで埋める想定
--- (バッチ自体は未実装、下記AGENTS.md参照)。
+-- レース確定後、race_payoutsと突き合わせて的中・回収率を計算するバッチで埋める想定。
+-- ✅ 2026-07-11: scripts/compute_recommendation_results.pyとして実装済み(詳細はAGENTS.md参照)。
 -- ------------------------------------------------------------
 create table race_recommendation_results (
   id uuid primary key default gen_random_uuid(),
