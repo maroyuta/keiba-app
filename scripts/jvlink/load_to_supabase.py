@@ -198,6 +198,30 @@ def build_entry_payload(row: dict, race_id: str, horse_id: str) -> dict:
     return payload
 
 
+def build_odds_updates(row: dict) -> list:
+    """O1_parsed.csvの1行(1レース分、単勝オッズは最大28頭分がフラット化されている)から、
+    race_entries.odds_win / expected_popularity を更新するための(horse_number, odds_win,
+    expected_popularity)のリストを組み立てる。odds_winは10倍値と仮定して/10する
+    (SE由来のodds_winと同じスケール変換、scripts/jvlink/README.md参照)。"""
+    updates = []
+    for i in range(1, 29):
+        umaban = to_int(row.get(f"tansho_umaban{i}", ""))
+        if not umaban:
+            continue
+        odds_win = to_float_scaled(row.get(f"tansho_odds{i}", ""), 10)
+        expected_popularity = to_int(row.get(f"tansho_ninki{i}", ""))
+        if odds_win is None and expected_popularity is None:
+            continue
+        updates.append(
+            {
+                "horse_number": umaban,
+                "odds_win": odds_win,
+                "expected_popularity": expected_popularity,
+            }
+        )
+    return updates
+
+
 def _format_combination(raw: str, num_width: int, num_parts: int) -> "str | None":
     raw = (raw or "").strip()
     if len(raw) != num_width * num_parts:
@@ -258,6 +282,28 @@ class SupabaseClient:
             body = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"{table}への問い合わせ失敗 ({e.code}): {body}") from e
 
+    def update(self, table: str, filters: dict, body: dict) -> list:
+        """race_entriesのように、既存行の一部カラムだけをrace_id+horse_number等の条件で
+        更新したい場合に使う(upsertと違い、未指定カラムに触れず該当行が無ければ何もしない)。"""
+        query = urllib.parse.urlencode(filters)
+        req = urllib.request.Request(
+            f"{self.base_url}/{table}?{query}",
+            data=json.dumps(body).encode("utf-8"),
+            method="PATCH",
+            headers={
+                "apikey": self.key,
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body_text = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"{table}への更新失敗 ({e.code}): {body_text}") from e
+
     def upsert(self, table: str, rows: list, on_conflict: str) -> list:
         if not rows:
             return []
@@ -291,6 +337,11 @@ def main() -> None:
     parser.add_argument("se_csv", help="SE_parsed.csvのパス")
     parser.add_argument("--env-file", help=".env.local等のパス (指定時は環境変数より優先しない)")
     parser.add_argument("--hr-csv", help="HR_parsed.csv(払戻情報)のパス。指定時はrace_payoutsへupsertする")
+    parser.add_argument(
+        "--o1-csv",
+        help="O1_parsed.csv(単勝・複勝・枠連オッズ、JVRTOpen由来)のパス。"
+        "指定時はrace_entries.odds_win/expected_popularityを更新する",
+    )
     args = parser.parse_args()
 
     if args.env_file:
@@ -402,6 +453,49 @@ def main() -> None:
             )
             print(
                 f"[race_payouts] {len(payout_results)}件 upsert完了 (skipped={payout_skipped})",
+                file=sys.stderr,
+            )
+
+    if args.o1_csv:
+        if not os.path.exists(args.o1_csv):
+            print(f"[race_entries odds] {args.o1_csv} が見つからないためスキップ", file=sys.stderr)
+        else:
+            with open(args.o1_csv, encoding="utf-8") as f:
+                o1_rows = list(csv.DictReader(f))
+            print(f"[読み込み] O1={len(o1_rows)}件", file=sys.stderr)
+
+            missing_keys = {
+                build_jv_race_key(r) for r in o1_rows
+            } - race_id_by_key.keys()
+            if missing_keys:
+                lookup = client.select(
+                    "races",
+                    {
+                        "jv_race_key": f"in.({','.join(sorted(missing_keys))})",
+                        "select": "id,jv_race_key",
+                    },
+                )
+                for r in lookup:
+                    race_id_by_key[r["jv_race_key"]] = r["id"]
+
+            odds_updated = 0
+            odds_skipped_no_race = 0
+            for row in o1_rows:
+                race_id = race_id_by_key.get(build_jv_race_key(row))
+                if not race_id:
+                    odds_skipped_no_race += 1
+                    continue
+                for update in build_odds_updates(row):
+                    horse_number = update.pop("horse_number")
+                    client.update(
+                        "race_entries",
+                        {"race_id": f"eq.{race_id}", "horse_number": f"eq.{horse_number}"},
+                        update,
+                    )
+                    odds_updated += 1
+
+            print(
+                f"[race_entries odds] {odds_updated}頭分 更新完了 (race未特定でスキップ={odds_skipped_no_race})",
                 file=sys.stderr,
             )
 

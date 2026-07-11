@@ -221,6 +221,66 @@ def parse_jg(data: bytes) -> dict:
     return d
 
 
+def parse_mdhm(c: ByteCursor, d: dict, prefix: str):
+    d[f"{prefix}_month"] = c.take(2)
+    d[f"{prefix}_day"] = c.take(2)
+    d[f"{prefix}_hour"] = c.take(2)
+    d[f"{prefix}_minute"] = c.take(2)
+
+
+def parse_o1(data: bytes) -> dict:
+    """JV_O1_ODDS_TANFUKUWAKU(単勝・複勝・枠連オッズ)。JVRTOpen("0B31", race_key)で
+    レース発売開始後にリアルタイム取得できる速報系レコード(JVOpenの蓄積系とは別API)。
+    race_keyは12桁のjv_race_keyとは異なり、RACE_ID同様の16桁
+    (年4+月日4+場コード2+回2+日目2+レース番号2)であることを実機で確認済み。
+    """
+    c = ByteCursor(data)
+    d = {}
+    parse_record_id(c, d)
+    parse_race_id(c, d)
+    parse_mdhm(c, d, "happyo_time")
+    d["toroku_tosu"] = c.take(2)
+    d["syusso_tosu"] = c.take(2)
+    d["tansyo_flag"] = c.take(1)
+    d["fukusyo_flag"] = c.take(1)
+    d["wakuren_flag"] = c.take(1)
+    d["fuku_chaku_barai_key"] = c.take(1)
+
+    tansho_umaban, tansho_odds, tansho_ninki = [], [], []
+    for _ in range(28):
+        tansho_umaban.append(c.take(2))
+        tansho_odds.append(c.take(4))
+        tansho_ninki.append(c.take(2))
+    _flatten_list(d, "tansho_umaban", tansho_umaban)
+    _flatten_list(d, "tansho_odds", tansho_odds)
+    _flatten_list(d, "tansho_ninki", tansho_ninki)
+
+    fukusho_umaban, fukusho_odds_low, fukusho_odds_high, fukusho_ninki = [], [], [], []
+    for _ in range(28):
+        fukusho_umaban.append(c.take(2))
+        fukusho_odds_low.append(c.take(4))
+        fukusho_odds_high.append(c.take(4))
+        fukusho_ninki.append(c.take(2))
+    _flatten_list(d, "fukusho_umaban", fukusho_umaban)
+    _flatten_list(d, "fukusho_odds_low", fukusho_odds_low)
+    _flatten_list(d, "fukusho_odds_high", fukusho_odds_high)
+    _flatten_list(d, "fukusho_ninki", fukusho_ninki)
+
+    wakuren_kumi, wakuren_odds, wakuren_ninki = [], [], []
+    for _ in range(36):
+        wakuren_kumi.append(c.take(2))
+        wakuren_odds.append(c.take(5))
+        wakuren_ninki.append(c.take(2))
+    _flatten_list(d, "wakuren_kumi", wakuren_kumi)
+    _flatten_list(d, "wakuren_odds", wakuren_odds)
+    _flatten_list(d, "wakuren_ninki", wakuren_ninki)
+
+    d["total_hyosu_tansho"] = c.take(11)
+    d["total_hyosu_fukusho"] = c.take(11)
+    d["total_hyosu_wakuren"] = c.take(11)
+    return d
+
+
 def _parse_pay_group(c: ByteCursor, count: int, combo_len: int, ninki_len: int):
     """PAY_INFO1〜4共通の(組番/馬番, 払戻金9桁, 人気順)の繰り返し項目を切り出す。"""
     combinations, payouts, ninkis = [], [], []
@@ -265,7 +325,7 @@ def parse_hr(data: bytes) -> dict:
     return d
 
 
-PARSERS = {"RA": parse_ra, "SE": parse_se, "JG": parse_jg, "HR": parse_hr}
+PARSERS = {"RA": parse_ra, "SE": parse_se, "JG": parse_jg, "HR": parse_hr, "O1": parse_o1}
 
 
 def read_lines(path: str):

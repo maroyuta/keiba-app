@@ -153,6 +153,41 @@ Windowsタスクスケジューラから週1回呼び出す想定。
 fetch(4203件、RA/SE/JG含め13種別) → parse(RA=145, SE=1904, JG=1504) → Supabase upsert
 (races=144, horses=1848, race_entries=1470, skipped=0)まで一括で成功することを確認した。
 
+## fetch_odds.py (レース前オッズのリアルタイム取得、2026-07-12追加)
+
+`fetch_raw.py`が使うJVOpen(蓄積系、レース確定後データ)とは別に、JV-Linkには
+**JVRTOpen(速報系)というリアルタイムデータ専用のAPI**がある。データ種別`"0B31"`で
+`JVRTOpen(dataspec, race_key)`を呼ぶと、発売開始後(金土日に随時更新)の単勝・複勝・枠連
+オッズ(レコード種別`"O1"`、`JV_O1_ODDS_TANFUKUWAKU`構造体)がその場で取得できる。
+
+**✅ Windows実機で実際に動作確認済み(2026-07-12):** 本日開催の「七夕賞」(福島2回6日目11R)に対し
+`py -3.12-32 fetch_odds.py 2026071203020611 out` → `py -3.12-32 parse_records.py out out` →
+`python load_to_supabase.py out/RA_parsed.csv out/SE_parsed.csv --env-file .env.jvlink
+--o1-csv out/O1_parsed.csv`の一連の流れで、実際に16頭全頭の`race_entries.odds_win`
+(4.7倍〜100.6倍)・`expected_popularity`(1〜16位)をSupabaseへ反映できることを確認した。
+
+**⚠️race_keyのフォーマットに注意:** `JVRTOpen`のrace_keyは`races.jv_race_key`(12桁: 年4+
+場コード2+回2+日目2+レース番号2)とは**異なり**、`RACE_ID`構造体と同じ**16桁**
+(年4+月日4+場コード2+回2+日目2+レース番号2、例: 2026年7月12日福島2回6日目11R →
+`"2026071203020611"`)。実機で動作確認済み。
+
+**使い方:**
+```
+py -3.12-32 fetch_odds.py <16桁のrace_key> out
+py -3.12-32 parse_records.py out out
+python load_to_supabase.py out/RA_parsed.csv out/SE_parsed.csv --env-file .env.jvlink --o1-csv out/O1_parsed.csv
+```
+
+**現状の制約:**
+- `run_weekly_sync.py`にはまだ組み込んでいない(週次バッチはレース確定後データが対象のため、
+  レース単位・当日随時実行が前提のオッズ取得とはライフサイクルが異なる。当日朝〜発走前に
+  対象レースのrace_keyを列挙して繰り返し呼ぶような別オーケストレーターが別途必要)
+- 複勝(`fukusho_odds_low/high`)・枠連(`wakuren_kumi/odds`)は`parse_o1()`でパース済みだが、
+  `load_to_supabase.py`側では単勝(`odds_win`/`expected_popularity`)しかSupabaseへ反映していない
+  (race_entriesに複勝・枠連オッズを格納する列が無いため。必要になったら別テーブル設計を検討)
+- 時系列でのオッズ変動追跡(発売開始直後→直前でどう動いたか)は未対応。`load_to_supabase.py`は
+  現在値で`race_entries`を上書きするのみ
+
 ## load_to_supabase.py の既知の制約・要検証事項
 
 **✅ 2026-07-05開催分の実データ(RA=144件・horses=1848件・race_entries=1470件、skipped=0)を
