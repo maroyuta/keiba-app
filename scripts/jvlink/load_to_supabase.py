@@ -147,7 +147,9 @@ def build_race_payload(row: dict) -> dict:
         "track_type": guess_track_type(row.get("track_cd", "")),
         "distance_m": to_int(row.get("kyori", "")),
         "weather": WEATHER_NAMES.get(row.get("tenko_cd", "")),
-        "entry_count": to_int(row.get("syusso_tosu", "")),
+        # syusso_tosu(出走頭数)はレース確定後にしか埋まらない。未確定レースでも頭数の
+        # 目安が使えるよう、無ければtoroku_tosu(登録頭数)にフォールバックする。
+        "entry_count": to_int(row.get("syusso_tosu", "")) or to_int(row.get("toroku_tosu", "")),
     }
     if payload["track_type"] == "ダート":
         track_condition = BABA_NAMES.get(row.get("dirt_baba_cd", ""))
@@ -342,11 +344,11 @@ def main() -> None:
             continue
         payload = build_entry_payload(row, race_id, horse_id)
         if not payload["horse_number"]:
-            # 枠順(馬番)確定前の登録段階データは全馬umaban="00"で届く。
+            # 出馬表確定前(JV-Dataのdata_kubun=1、umaban未採番="00")のプレースホルダー行。
             # (race_id, horse_number)がupsertのON CONFLICTキーのため、これを素通しすると
             # 同じレースの全馬が同じキー(horse_number=0)に潰れ合い、最後の1頭しか残らなくなる
             # (実際に2026-07-11、枠順未確定だった7/12開催の全レースでこの事故が発生した)。
-            # 馬番が確定してから初めて意味のある行になるため、未確定行は同期対象から除外する。
+            # horse_number=0は実在しない馬番のため、race_entriesには入れずスキップする。
             skipped += 1
             continue
         entry_payloads.append(payload)
