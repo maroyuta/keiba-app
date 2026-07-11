@@ -6,9 +6,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
-## 📊 進捗率(目安、2026-07-11時点)
+## 📊 進捗率(目安、2026-07-12時点)
 
-**JV-Link→Supabase自動同期パイプライン全体: 体感90〜95%**
+**JV-Link→Supabase自動同期パイプライン: 体感95%**
 - JV-Link接続・生データ取得: 完了 ✅
 - RA/SE/JGのフィールドパーサー: 完了 ✅ (Windows側で実データ検証済み)
 - **Supabase書き込み: 完了 ✅ (2026-07-11、実データend-to-end検証済み)。** 2026-07-05開催分の
@@ -19,11 +19,25 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **✅ 差分同期・`run_weekly_sync.py`の通しテスト完了(2026-07-11)。** Windows実機で2回実行し、
   新規データありのケース・「差分なし」のケース両方でEXIT=0を確認。文字化け対策も実機の
   本物のデータで検証済み(詳細は`scripts/jvlink/README.md`参照)
+- **✅ 枠順未確定時のupsertキー衝突バグを修正・DBのゴミ行36件を削除済み(2026-07-12)。**
 - **残るはWindowsタスクスケジューラへの`schtasks`登録のみ。** コマンド例は用意済み、実際の登録・
   「本当に1週間放置して自動で回るか」の実地確認だけが未着手
 
-**アプリ本体(診断ロジック・UI・ダッシュボード): ほぼ完成。** 残りは主に「JV-Linkの実データが
-流れてきた時に正しく動くか」の検証(マイグレーション適用確認・実ブラウザ確認など、下記参照)。
+**過去走データ(netkeiba経由の`past_performances`): 体感30%**
+- スクレイパー自体は実データ2レース分で検証済み ✅ (平地レースはJV-Data側と完全一致、
+  netkeiba race_idが`jv_race_key`と同一フォーマットであることも確認済み)
+- ただしDBに実際に入っているのはこのテストの2レース分のみ。全レース分の投入・
+  Windowsでの自動スケジュール化(schtasks)はこれから
+
+**レース前オッズの取得: 体感0%。** 取得手段自体がまだ決まっていない(JV-Dataのリアルタイム
+系データ種別を使うか、netkeibaの別ページを使うか、これから調査)。
+
+**アプリ本体(診断ロジック・UI・ダッシュボード)のコード: 体感90%、ほぼ完成。** ただし
+**「今日実際に開催されるレースの診断が出せるか」で言うと体感20〜30%程度。** 2026-07-12の
+七夕賞で実地テストしたところ、過去走データとレース前オッズが両方とも空だったため、
+Sonnetまで強制的に実行しても全16頭C評価・買い目なしという結果になった(詳細は下記
+「⏸️ 引き継ぎ中の相談」参照)。上記2つのデータ源が揃わない限り、コードが正しくても
+実用的な診断は出せない。
 
 この数値は正確な計測ではなく体感の目安。**質問「今何%?」が来たら、この節を更新してから
 答えること。** 次回の作業もここから状況を把握できる。
@@ -50,7 +64,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - **② 過去走データ(`past_performances`)が事実上空(全体で7件のみ)、かつ未来レースの`odds_win`は全馬0.0で未同期。** これにより七夕賞をstandard診断しようとしても、screening(Haiku)が「データ不足により判定不可」でC評価を返し、Sonnetまで進めなかった(=コスト制御としては正しい挙動、ただし実用上は診断が出せていない)。`past_performances`は`scripts/netkeiba/syncPastPerformances.ts`(`npm run sync:netkeiba`)で埋める設計だが、Windows側でのスケジュール化が未実施(README「Windows PCでのスケジュール化(未実施)」節に既知の課題として記載済み)。**さらに、レース前オッズ(`odds_win`)を埋める仕組みが現状どこにも存在しない**(JV-LinkのRA/SEは基本的に確定後データが中心で、直前の予想オッズはJV-Data側の別データ種別(速報系)かnetkeiba側の別ページ経由が必要と思われるが未調査・未実装。AGENTS.mdにこれまで記載がなかった新しいギャップ)。
    - **副産物として七夕賞の`race_entries`にも軽微なデータ品質バグを発見。** ヤマニンブークリエが`horse_number=0`(枠順未確定時の残骸)と`horse_number=15`(確定後の正しい行)で重複して残っている。上記①と同根の問題。screeningのAIはこれも「データ整合性に問題あり」として正しく検知していた。
    - **結論: 「全頭診断」機能自体(APIルート・プロンプト・screening→standardのコスト制御)は実装として正しく動作することを実地確認できたが、今のままでは実際にどのレースを叩いても実用的な診断は出せない。** 次にやるべきことは優先度順で (a) `load_to_supabase.py`のupsertキー設計を見直す(馬番未確定"00"の行を無視する、または`race_id + ketto_num`など安定したキーに変える)、(b) `npm run sync:netkeiba`をWindows側でスケジュール化して過去走データを埋める、(c) レース前オッズをどう取得するか調査する(JV-Dataの速報系データ種別 or netkeiba)。
-   - **✅ (a)対応完了(2026-07-11)。** `load_to_supabase.py`の`race_entries`書き込みループで、`umaban`(馬番)が未確定(="00"→`to_int`で0)の行を同期対象から除外するよう修正。ダミーデータで「3頭とも未確定→0件登録・3件スキップ」「馬番確定後→3件とも登録」をユニットテストで確認済み(テストコード自体はリポジトリには未追加、スクラッチのみ)。**あわせて、この事故で既にDBに残っていたゴミ行(`horse_number=0`・`post_position=0`・`odds_win=0.0`、7/12開催36レース分・織姫賞含む)をSupabase REST APIから直接36件削除し、0件になったことを確認済み。** これで次回Windowsが同期しても同じ事故は起きないはず(実機での再検証はまだ)。(b)(c)は未着手のまま。
+   - **✅ (a)対応完了(2026-07-11)。** `load_to_supabase.py`の`race_entries`書き込みループで、`umaban`(馬番)が未確定(="00"→`to_int`で0)の行を同期対象から除外するよう修正。ダミーデータで「3頭とも未確定→0件登録・3件スキップ」「馬番確定後→3件とも登録」をユニットテストで確認済み(テストコード自体はリポジトリには未追加、スクラッチのみ)。**あわせて、この事故で既にDBに残っていたゴミ行(`horse_number=0`・`post_position=0`・`odds_win=0.0`、7/12開催36レース分・織姫賞含む)をSupabase REST APIから直接36件削除し、0件になったことを確認済み。** これで次回Windowsが同期しても同じ事故は起きないはず(実機での再検証はまだ)。
+   - **✅ (b) `npm run sync:netkeiba`をMac側で実際に2レース分手動実行し、実データで検証完了(2026-07-12)。** 重要な発見: **netkeiba側のrace_id(`race.netkeiba.com/race/result.html?race_id=...`)は`races.jv_race_key`と完全に同一の12桁フォーマット**であることを実データで確認した(README「要検証」だった前提が解消)。これにより「同期対象のrace_idリストをどう組み立てるか」という設計課題は解消 — 自前の`races`テーブルから`race_date`で絞って`jv_race_key`を引くだけでよい。
+     - 検証①: 小倉1R(2026-07-05、`jv_race_key=202610020401`)→ 実は障害レースだったため、`finish_time_sec`(約192〜206秒、2860mの障害としては妥当)は正常だが、**`agari_3f_sec`が13〜14秒という物理的にあり得ない値になっており、障害レースではこのフィールドのパースが壊れていることが判明**(600mを13秒台=時速150km超はあり得ない)。障害レースは既存方針で診断対象外のため実害はないが、`parseRaceResult.ts`のセレクタが障害レースのHTML構造differenceに対応できていない可能性が高い。
+     - 検証②: 函館1R(2026-07-05、`jv_race_key=202602010801`、芝1200m、9頭)→ **JV-Data側の`race_entries`と全項目(finish_position・odds_win・actual_popularity・finish_time_sec)が完全一致。** upserted=9・skipped=0。平地レースについてはnetkeibaスクレイパーの品質は非常に高いと確認できた。
+     - **まだ未着手: Windows側でのスケジュール化そのもの(schtasks登録)。** 上記の検証によりrace_idリストの組み立て方針は決まったので、実装のハードルは下がった。次にやるべきは、前日の開催race_id一覧を`races`テーブルから引いて`npm run sync:netkeiba`に渡すラッパースクリプトを書き、Windowsのタスクスケジューラに登録すること。
+   - **✅ (c) レース前オッズの取得手段をWeb調査完了(2026-07-12、方針決定・実装はこれから)。** JV-Linkには2種類のAPIがあり、これまで使っていた`JVOpen`(蓄積系、レース確定後のデータ)とは別に**`JVRTOpen`(速報系)というリアルタイムデータ用のAPIが存在する**。データ種別`"0B31"`で`JVRTOpen(dataspec, race_key)`を呼ぶと、レース発売開始後の単勝・複勝・枠連オッズ(レコード種別`"O1"`)がリアルタイムで取得できる(金土日に随時更新、単勝オッズ部分は先頭44バイト目から1頭28バイトで最大28頭分)。**つまりnetkeibaに頼らずJV-Data優先原則のまま解決できる見込みが高い。** ただし(i)正確なバイト位置は`JVData_Struct.cs`でのRA/SE/HRと同様の裏取りが必要、(ii)`JVRTOpen`用のrace_keyのフォーマットが`jv_race_key`(12桁)と同一か別物か未確認(Web検索で見つけたサンプルは16桁の値を使っていた)、(iii)32bit PythonでのJV-Link接続がやはり必要、なのでこれもWindows側での実装・実データ検証が必要になる。次にやるべきは、Windows側で`JVRTOpen("0B31", <race_key>)`を実際に叩いてO1レコードを取得し、`JVData_Struct.cs`の該当構造体とバイト位置を突き合わせて`parse_records.py`に`parse_o1()`を追加すること(参考: [JV LINKを利用してAPI経由でオッズ情報を取得する方法](https://developer.jra-van.jp/t/topic/701)、[時系列オッズについて](https://developer.jra-van.jp/t/topic/872))。
 4. **premium(Opus)診断の実測usageを取るか?** — まだユーザーの明示的な回答待ち(1回課金される)
 5. **JV-Link接続 — ✅ 疎通確認完了 (2026-07-11)。** Windows PC側でClaude Codeを使い、実際にJV-Linkから生データの取得に成功した(RA=レース詳細37件、SE=馬毎レース情報492件、JG=1002件、合計1531件を取得・確認済み)。作業はこのリポジトリではなくWindows PC上の`C:\Users\maroy\OneDrive\デスクトップ\jvlink\`で別途行われており、このリポジトリの`scripts/jvlink/fetch_raw.py`(Mac側セッションで作成した雛形)とは別の実装になっている。Windows側での実装・デバッグ過程で判明した重要な知見:
    - `JVRead("", 0, "")`のようにバッファサイズに0を渡すと`STATUS_STACK_BUFFER_OVERRUN`でクラッシュする。十分な数値(例: 110000)を渡す必要がある(このリポジトリの`fetch_raw.py`は元から`READ_BUFFER_SIZE = 300000`を渡しており問題なし)
