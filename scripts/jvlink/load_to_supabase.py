@@ -279,7 +279,16 @@ def main() -> None:
         if not race_id or not horse_id:
             skipped += 1
             continue
-        entry_payloads.append(build_entry_payload(row, race_id, horse_id))
+        payload = build_entry_payload(row, race_id, horse_id)
+        if not payload["horse_number"]:
+            # 枠順(馬番)確定前の登録段階データは全馬umaban="00"で届く。
+            # (race_id, horse_number)がupsertのON CONFLICTキーのため、これを素通しすると
+            # 同じレースの全馬が同じキー(horse_number=0)に潰れ合い、最後の1頭しか残らなくなる
+            # (実際に2026-07-11、枠順未確定だった7/12開催の全レースでこの事故が発生した)。
+            # 馬番が確定してから初めて意味のある行になるため、未確定行は同期対象から除外する。
+            skipped += 1
+            continue
+        entry_payloads.append(payload)
 
     entry_payloads = dedupe_by_key(
         entry_payloads, lambda p: (p["race_id"], p["horse_number"])
