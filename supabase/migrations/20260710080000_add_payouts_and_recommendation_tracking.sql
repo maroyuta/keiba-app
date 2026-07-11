@@ -9,9 +9,10 @@
 
 -- ------------------------------------------------------------
 -- race_payouts: レース確定後の実際の払戻金(公式配当)
--- 要確認: JV-Dataの配当情報レコード種別(仕様書上の正式なレコードID・フィールド構成)は
--- 未調査。SLOP/WOOD/BLODと同様に次回JV-Data仕様書で確認すること。ここでは一般的な
--- 中央競馬の払戻区分に基づいて設計している。
+-- ✅ 2026-07-11: JV-Dataの配当情報レコード(HR, JV_HR_PAY構造体)のバイトオフセットを
+-- JVData_Struct.csで確認し、scripts/jvlink/parse_records.pyのparse_hr()で実装済み。
+-- scripts/jvlink/load_to_supabase.pyの--hr-csvオプションでこのテーブルへupsertする
+-- (combination/payout_yenはnetkeiba実データと完全一致を確認済み。詳細はscripts/jvlink/README.md参照)。
 -- ------------------------------------------------------------
 create table race_payouts (
   id uuid primary key default gen_random_uuid(),

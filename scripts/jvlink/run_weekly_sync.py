@@ -81,6 +81,8 @@ def main() -> None:
                     str(OUT_DIR / "SE_parsed.csv"),
                     "--env-file",
                     str(ENV_FILE),
+                    "--hr-csv",
+                    str(OUT_DIR / "HR_parsed.csv"),
                 ],
                 log,
             )
