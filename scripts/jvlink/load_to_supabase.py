@@ -147,7 +147,9 @@ def build_race_payload(row: dict) -> dict:
         "track_type": guess_track_type(row.get("track_cd", "")),
         "distance_m": to_int(row.get("kyori", "")),
         "weather": WEATHER_NAMES.get(row.get("tenko_cd", "")),
-        "entry_count": to_int(row.get("syusso_tosu", "")),
+        # syusso_tosu(出走頭数)はレース確定後にしか埋まらない。未確定レースでも頭数の
+        # 目安が使えるよう、無ければtoroku_tosu(登録頭数)にフォールバックする。
+        "entry_count": to_int(row.get("syusso_tosu", "")) or to_int(row.get("toroku_tosu", "")),
     }
     if payload["track_type"] == "ダート":
         track_condition = BABA_NAMES.get(row.get("dirt_baba_cd", ""))
@@ -340,7 +342,13 @@ def main() -> None:
         if not race_id or not horse_id:
             skipped += 1
             continue
-        entry_payloads.append(build_entry_payload(row, race_id, horse_id))
+        payload = build_entry_payload(row, race_id, horse_id)
+        if not payload["horse_number"]:
+            # 出馬表確定前(JV-Dataのdata_kubun=1、umaban未採番)のプレースホルダー行。
+            # horse_number=0は実在しない馬番のため、race_entriesには入れずスキップする。
+            skipped += 1
+            continue
+        entry_payloads.append(payload)
 
     entry_payloads = dedupe_by_key(
         entry_payloads, lambda p: (p["race_id"], p["horse_number"])
