@@ -48,8 +48,8 @@ create policy "Authenticated users can read race_payouts" on race_payouts
 -- race_recommendation_results: 診断が出したhonmei/aite推奨が、確定後に
 -- 実際どうだったか。races.honmei_horse_number等は再診断のたびに上書きされうるため、
 -- 「その時点で実際に賭けた想定の推奨」を別途スナップショットとして残す。
--- レース確定後、race_payoutsと突き合わせて的中・回収率を計算するバッチで埋める想定
--- (バッチ自体は未実装、下記AGENTS.md参照)。
+-- レース確定後、race_payoutsと突き合わせて的中・回収率を計算するバッチで埋める想定。
+-- ✅ 2026-07-11: scripts/compute_recommendation_results.pyとして実装済み(詳細はAGENTS.md参照)。
 -- ------------------------------------------------------------
 create table race_recommendation_results (
   id uuid primary key default gen_random_uuid(),

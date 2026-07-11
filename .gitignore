@@ -48,6 +48,9 @@ scripts/jvlink/.venv/
 scripts/jvlink/logs/
 # .env.jvlink は上の `.env*` ルールで既にignore対象
 
+# scripts配下の他のPythonバッチ (compute_recommendation_results.py等) 共通
+scripts/__pycache__/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
