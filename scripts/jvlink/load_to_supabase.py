@@ -8,17 +8,13 @@ JV-Link COMに依存しない(標準ライブラリのみ使用)ため、Mac/Win
 - 環境変数 NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が設定されていること
   (.env.localと同じ値。--env-fileオプションでファイルから読み込むことも可能)
 
-⚠️ 未検証のJV-Dataコード変換について (2026-07-11時点):
-このスクリプトが行っているコード変換のうち、以下は実データでの裏取りがまだ済んでいない
-(実際のレース結果と突き合わせた検証が未実施)。本番投入前に、既知のレース(例:
-2026-07-05の完了済みレース)で変換結果が実態と合っているか確認すること。
-- track_type (track_cdからの芝/ダート/障害判定): 一般に10番台=芝、20番台=ダート、
-  50番台=障害という構造だと想定しているが、正確な境界値はJV-Data仕様書での確認が必要
-- grade (grade_cdからのG1/G2/G3判定): A/B/Cのみ対応、それ以外は生コードを保持
-- weather (tenko_cdからの天候判定)・track_condition (baba_cdからの馬場状態判定)
-- odds_win・jockey_weight_kg のスケール (10倍値と仮定して/10している)
-一方、finish_time_sec (タイムのMSS.d形式からの秒変換) はWindows側で実データ検証済み
-("1098" = 1分09秒8 = 69.8秒) のためこの変換のみ高い確度がある。
+✅ JV-Dataコード変換の実データ検証について (2026-07-11):
+track_type/grade/weather/track_condition/odds_win/jockey_weight_kg/finish_time_secは、
+小倉11R「北九州記念」(G3、2026-07-05、race_id=202610020411)をnetkeibaの結果ページと
+突き合わせ、出走13頭全頭・レース情報ともに完全一致することを確認済み(詳細は
+scripts/jvlink/README.mdの「load_to_supabase.pyの既知の制約・要検証事項」参照)。
+唯一、horse_weight_diff_kgは実際の増減0kgのケースを計測不能(None)と区別できていない
+軽微な既知の粗が残っている(回収率計算には影響しない)。
 
 JG(競走馬除外情報)は現状このスクリプトでは扱わない。race_entriesスキーマに
 「除外」を表す適切な列が無く、is_kesshi/kesshi_reasonは別目的(診断ロジックの消し判定)の

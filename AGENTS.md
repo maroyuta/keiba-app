@@ -13,7 +13,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - RA/SE/JGのフィールドパーサー: 完了 ✅ (Windows側で実データ検証済み)
 - **Supabase書き込み: 完了 ✅ (2026-07-11、実データend-to-end検証済み)。** 2026-07-05開催分の
   実データ(races=144件・horses=1848件・race_entries=1470件、skipped=0)をSupabaseへ投入し、
-  オッズ/斤量/タイム/track_type等の主要フィールドが実態と矛盾しないことを確認済み(詳細は
+  オッズ/斤量/タイム/track_type等の主要フィールドが実態と矛盾しないことを確認済み。
+  **さらに小倉11R「北九州記念」(G3)をnetkeibaと直接突き合わせ、grade/track_type/
+  track_condition/weather/odds_win/jockey_weight_kg/finish_time_secが全項目・全13頭で
+  完全一致することを確認し、これまで「要検証」だったコード変換をすべて解消した**(詳細は
   `scripts/jvlink/README.md`「load_to_supabase.pyの既知の制約・要検証事項」参照)
 - **✅ Mac/Windowsのコード一本化完了(GitHub経由)。** `scripts/jvlink/`に全ピースが揃った
 - **✅ 差分同期・`run_weekly_sync.py`の通しテスト完了(2026-07-11)。** Windows実機で2回実行し、
@@ -73,7 +76,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
      **⚠️次に必要な確認:** 次回月曜(2026-07-13 6:00)の実行後に`Last Result`が0になっているか、
      `scripts/jvlink/logs/`にログが残っているかをチェックすること(登録時点ではまだ一度も自動実行されていない)。
    - **✅完了(2026-07-11): HRレコード(配当情報)のパーサーを追加した。** `JVData_Struct.cs`の`JV_HR_PAY`構造体でバイトオフセットを確認し、`parse_records.py`に`parse_hr()`を実装・`PARSERS`へ登録(詳細・netkeibaとの実データ照合結果は`scripts/jvlink/README.md`の「各修正の反映状況」8番、および上記`race_payouts`節を参照)。バックテストに必要だった配当データのパース手段はこれで揃った
-   - **次回最優先: (1)** 2026-07-05等の実CSVで`load_to_supabase.py`を実際に実行し、Supabaseに入った値(特にtrack_type/grade/odds_win)を実際のレース結果と突き合わせて要検証項目を確定させる。**(2)** `HR_parsed.csv`を受け取ってrace_payoutsへupsertする処理を`load_to_supabase.py`に追加する(Mac側で別途対応予定)。**(3)** 実際に1週間分放置してみて`run_weekly_sync.py`の自動実行が無人で回るか確認する。**(4)** 旧`C:\Users\maroy\OneDrive\デスクトップ\jvlink\`(gitクローンではない方の作業フォルダ)は役目を終えたので、新しいクローン先に一本化して整理する。**(5)** `grade`(G1/G2/G3判定)やtrack_type境界値の詳細など、まだ裏取りできていない項目を重賞レースのデータで検証する
+   - **✅完了(2026-07-11): `load_to_supabase.py`の要検証項目をnetkeibaと直接突き合わせて解消した。** 小倉11R「北九州記念」(G3、2026-07-05)をnetkeibaの結果ページと照合し、grade/track_type/track_condition/weather/odds_win/jockey_weight_kg/finish_time_secが出走13頭全頭・レース情報ともに完全一致することを確認(詳細は`scripts/jvlink/README.md`参照)。**⚠️軽微な既知の粗として残るのは** `horse_weight_diff_kg`が実際の増減0kgと計測不能を区別できていない点のみ(回収率計算には影響しない)
+   - **次回最優先: (1)** `HR_parsed.csv`を受け取ってrace_payoutsへupsertする処理を`load_to_supabase.py`に追加する(Mac側で別途対応予定)。**(2)** 実際に1週間分放置してみて`run_weekly_sync.py`の自動実行が無人で回るか確認する。**(3)** 旧`C:\Users\maroy\OneDrive\デスクトップ\jvlink\`(gitクローンではない方の作業フォルダ)は役目を終えたので、新しいクローン先に一本化して整理する
    - **📋 次回セッションの計画: 過去100レース程度のバックテスト(ユーザー希望、2026-07-11)。** 単に診断ロジックを過去レースに適用するだけでなく、**「実際にワイド・馬連で買っていたら回収率はどうだったか」まで出したい**とのこと。配当データのパース(HRレコード)は完了したので、残る前提は(a)上記`race_payouts`へのupsert実装、(b)`race_recommendation_results`算出バッチの実装。診断自体のAPI課金は100レース規模なら概算¥1,000程度に収まる見込み(実測単価は「API使用量の実測ログ機構」節参照)
 
 背景: ユーザーは当初月¥12,000のコストは払いたくない、実際に買うのは~5レース/日程度、という制約から相談を開始。その後¥4,000程度への圧縮・オッズ妙味重視の予想ロジック・回収率の可視化と話が進んだ。
