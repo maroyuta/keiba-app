@@ -46,6 +46,13 @@ npm run sync:netkeiba:recent -- [--days N]
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+**✅ `--env-file <path>`にも対応済み(2026-07-12)。** Windowsタスクスケジューラ等、シェルでの
+`source`が使えない環境から実行する場合、`npm run sync:netkeiba -- ... --env-file <path>`や
+`npm run sync:netkeiba:recent -- --env-file <path>`のように指定すると、そのファイルから
+`NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`を読み込む
+(`scripts/jvlink/load_to_supabase.py`の`--env-file`と同じ設計)。Mac側でクリーンな環境
+(`env -i`)から実行して動作確認済み。
+
 ## Windows PCでのスケジュール化 (未実施)
 
 このリポジトリの外側の作業。JV-Linkの定期実行と同じマシン上で、タスクスケジューラから

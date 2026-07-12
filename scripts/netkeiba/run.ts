@@ -1,9 +1,10 @@
 import { syncPastPerformances } from "./syncPastPerformances";
+import { loadEnvFileFromArgs } from "./loadEnvFile";
 
-// 使い方: npm run sync:netkeiba -- 202610010301 202610010302 ...
+// 使い方: npm run sync:netkeiba -- 202610010301 202610010302 ... [--env-file <path>]
 // race_idはnetkeiba race.netkeiba.com/race/result.html?race_id=XXXXXXXXXXXX のクエリパラメータ。
 async function main() {
-  const raceIds = process.argv.slice(2);
+  const raceIds = loadEnvFileFromArgs(process.argv.slice(2));
   if (raceIds.length === 0) {
     console.error("使い方: npm run sync:netkeiba -- <race_id> [<race_id> ...]");
     process.exit(1);

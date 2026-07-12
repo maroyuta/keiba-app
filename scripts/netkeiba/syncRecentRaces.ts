@@ -1,14 +1,16 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { syncPastPerformances } from "./syncPastPerformances";
+import { loadEnvFileFromArgs } from "./loadEnvFile";
 
 // 定期実行(週次想定)から呼ぶラッパー。「races」テーブル自体から直近N日分のjv_race_keyを
 // 引いてnetkeibaへ同期する。netkeiba race_idはjv_race_keyと同一フォーマットであることを
 // 実データで確認済み(2026-07-12、AGENTS.md参照)。
 //
-// 使い方: npm run sync:netkeiba:recent -- [--days N]
+// 使い方: npm run sync:netkeiba:recent -- [--days N] [--env-file <path>]
 // --days省略時は7(直近1週間)。障害レースはparseRaceResult.tsの既知の不具合(agari_3f_sec等が
-// 壊れる)があるため対象外。
+// 壊れる)があるため対象外。--env-fileはWindowsタスクスケジューラ等、シェルでの`source`が
+// 使えない環境向け(scripts/jvlink/load_to_supabase.pyの--env-fileと同じ設計)。
 
 function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -34,7 +36,8 @@ function parseDaysArg(argv: string[]): number {
 }
 
 async function main() {
-  const days = parseDaysArg(process.argv.slice(2));
+  const args = loadEnvFileFromArgs(process.argv.slice(2));
+  const days = parseDaysArg(args);
   const since = new Date();
   since.setDate(since.getDate() - days);
   const sinceStr = since.toISOString().slice(0, 10);
