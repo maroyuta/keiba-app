@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "sync:netkeiba": "tsx scripts/netkeiba/run.ts"
+    "sync:netkeiba": "tsx scripts/netkeiba/run.ts",
+    "sync:netkeiba:recent": "tsx scripts/netkeiba/syncRecentRaces.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

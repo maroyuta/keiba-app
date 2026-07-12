@@ -81,10 +81,15 @@ async function loadRaceDiagnosisInput(
   const horseIds = entries.map((entry) => entry.horse_id);
   const entryIds = entries.map((entry) => entry.id);
 
+  // race.race_date以降(当日含む)のpast_performancesは、同じ馬が対象レースより後に
+  // 走った別レースの結果である可能性があり、「過去走」として見せると未来の結果が
+  // 診断に漏れ込んでしまう(2026-07-12、七夕賞のテスト中に発覚)。対象レースより
+  // 厳密に前の日付のみに絞る。
   const { data: pastPerformances } = await supabase
     .from("past_performances")
     .select("*")
     .in("horse_id", horseIds)
+    .lt("race_date", race.race_date)
     .order("race_date", { ascending: false });
 
   const pastByHorse = new Map<string, NonNullable<typeof pastPerformances>>();

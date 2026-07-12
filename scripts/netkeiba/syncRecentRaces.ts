@@ -1,0 +1,81 @@
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
+import { syncPastPerformances } from "./syncPastPerformances";
+
+// 定期実行(週次想定)から呼ぶラッパー。「races」テーブル自体から直近N日分のjv_race_keyを
+// 引いてnetkeibaへ同期する。netkeiba race_idはjv_race_keyと同一フォーマットであることを
+// 実データで確認済み(2026-07-12、AGENTS.md参照)。
+//
+// 使い方: npm run sync:netkeiba:recent -- [--days N]
+// --days省略時は7(直近1週間)。障害レースはparseRaceResult.tsの既知の不具合(agari_3f_sec等が
+// 壊れる)があるため対象外。
+
+function createClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が環境変数に設定されていません",
+    );
+  }
+  return createSupabaseClient<Database>(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+function parseDaysArg(argv: string[]): number {
+  const idx = argv.indexOf("--days");
+  if (idx === -1) return 7;
+  const value = Number(argv[idx + 1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("--days には正の整数を指定してください");
+  }
+  return value;
+}
+
+async function main() {
+  const days = parseDaysArg(process.argv.slice(2));
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const sinceStr = since.toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const supabase = createClient();
+  const { data: races, error } = await supabase
+    .from("races")
+    .select("jv_race_key, race_date, keibajo_name, race_number, track_type")
+    .gte("race_date", sinceStr)
+    // 当日・未来のレースは除外する。含めてしまうと、まだ走っていない(または
+    // JV-Link側で結果未確定の)レースをnetkeibaから取得してしまい、対象レース自身が
+    // 「過去走」として自己参照する事故につながる(2026-07-12、七夕賞の手動バックフィルで
+    // 実際に発生・発覚した)。
+    .lt("race_date", todayStr)
+    .neq("track_type", "障害");
+  if (error) {
+    throw new Error(`racesの取得に失敗しました: ${error.message}`);
+  }
+  if (!races || races.length === 0) {
+    console.log(`[info] ${sinceStr}以降の対象レースが見つかりませんでした`);
+    return;
+  }
+
+  console.log(`[info] ${sinceStr}以降の${races.length}レースを同期します`);
+  const raceIds = races.map((r) => r.jv_race_key);
+  const summaries = await syncPastPerformances(raceIds);
+
+  console.log("\n=== 同期結果 ===");
+  let totalUpserted = 0;
+  for (const summary of summaries) {
+    totalUpserted += summary.upserted;
+    console.log(
+      `${summary.raceId}: ${summary.status} (upserted=${summary.upserted}, skipped=${summary.skippedUnknownHorses.length})`,
+    );
+  }
+  const failed = summaries.filter((s) => s.status !== "ok");
+  console.log(`\n合計upserted=${totalUpserted}件、失敗=${failed.length}件`);
+}
+
+main().catch((err) => {
+  console.error("[netkeiba] 定期同期が予期せず失敗しました:", err);
+  process.exit(1);
+});
