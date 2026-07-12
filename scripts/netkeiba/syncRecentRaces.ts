@@ -1,7 +1,6 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
 import { syncPastPerformances } from "./syncPastPerformances";
 import { loadEnvFileFromArgs } from "./loadEnvFile";
+import { createNetkeibaSyncClient } from "./supabaseClient";
 
 // 定期実行(週次想定)から呼ぶラッパー。「races」テーブル自体から直近N日分のjv_race_keyを
 // 引いてnetkeibaへ同期する。netkeiba race_idはjv_race_keyと同一フォーマットであることを
@@ -11,19 +10,6 @@ import { loadEnvFileFromArgs } from "./loadEnvFile";
 // --days省略時は7(直近1週間)。障害レースはparseRaceResult.tsの既知の不具合(agari_3f_sec等が
 // 壊れる)があるため対象外。--env-fileはWindowsタスクスケジューラ等、シェルでの`source`が
 // 使えない環境向け(scripts/jvlink/load_to_supabase.pyの--env-fileと同じ設計)。
-
-function createClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) {
-    throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が環境変数に設定されていません",
-    );
-  }
-  return createSupabaseClient<Database>(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 function parseDaysArg(argv: string[]): number {
   const idx = argv.indexOf("--days");
@@ -43,7 +29,7 @@ async function main() {
   const sinceStr = since.toISOString().slice(0, 10);
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  const supabase = createClient();
+  const supabase = createNetkeibaSyncClient();
   const { data: races, error } = await supabase
     .from("races")
     .select("jv_race_key, race_date, keibajo_name, race_number, track_type")

@@ -1,25 +1,12 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { fetchNetkeibaHtml } from "./httpClient";
 import { parseHorseHistoryHtml } from "./parseHorseHistory";
+import { createNetkeibaSyncClient } from "./supabaseClient";
 
 // db.netkeiba.com/horse/result/{netkeiba馬ID}/ を馬単位で取得し、その馬の全レース履歴を
 // past_performancesへ一括反映する。race.netkeiba.com由来のsyncPastPerformances(レース単位)
 // と違い、自前のracesテーブルがカバーしていない期間の過去走も一度に取れる利点がある
 // (netkeiba側の馬IDはhorses.jv_horse_idと同一という前提、README参照)。
-
-function createSyncClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) {
-    throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が環境変数に設定されていません",
-    );
-  }
-  return createSupabaseClient<Database>(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 export interface HorseHistorySyncSummary {
   jvHorseId: string;
@@ -32,18 +19,27 @@ function buildHorseResultUrl(jvHorseId: string): string {
 }
 
 export async function syncHorseHistory(jvHorseIds: string[]): Promise<HorseHistorySyncSummary[]> {
-  const supabase = createSyncClient();
+  const supabase = createNetkeibaSyncClient();
   const summaries: HorseHistorySyncSummary[] = [];
 
-  // jv_horse_id -> 内部horses.id の解決 (一括)
-  const { data: horses, error: horseLookupError } = await supabase
-    .from("horses")
-    .select("id, jv_horse_id")
-    .in("jv_horse_id", jvHorseIds);
-  if (horseLookupError) {
-    throw new Error(`horses検索に失敗: ${horseLookupError.message}`);
+  // jv_horse_id -> 内部horses.id の解決。1回の.in()にIDを大量に詰め込むとURLが長大になり
+  // リクエストがハングする事故が実際に起きた(2026-07-12、1367件で2時間以上ハング)ため、
+  // チャンクに分けて問い合わせる。
+  const LOOKUP_CHUNK_SIZE = 200;
+  const internalIdByJvId = new Map<string, string>();
+  for (let i = 0; i < jvHorseIds.length; i += LOOKUP_CHUNK_SIZE) {
+    const chunk = jvHorseIds.slice(i, i + LOOKUP_CHUNK_SIZE);
+    const { data: horses, error: horseLookupError } = await supabase
+      .from("horses")
+      .select("id, jv_horse_id")
+      .in("jv_horse_id", chunk);
+    if (horseLookupError) {
+      throw new Error(`horses検索に失敗: ${horseLookupError.message}`);
+    }
+    for (const h of horses) {
+      internalIdByJvId.set(h.jv_horse_id, h.id);
+    }
   }
-  const internalIdByJvId = new Map(horses.map((h) => [h.jv_horse_id, h.id]));
 
   for (const jvHorseId of jvHorseIds) {
     const internalHorseId = internalIdByJvId.get(jvHorseId);

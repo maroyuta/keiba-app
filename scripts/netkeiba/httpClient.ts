@@ -8,6 +8,10 @@ const NETKEIBA_USER_AGENT =
 // 短時間の連続アクセスによるIPブロックを避けるための最小リクエスト間隔。
 const MIN_REQUEST_INTERVAL_MS = 5000;
 
+// fetch()自体にはデフォルトのタイムアウトが無く、ネットワーク不調時に無限に
+// ハングしうる(2026-07-12、大量馬の一括取得中に実際に2時間以上ハングする事故が発生)。
+const REQUEST_TIMEOUT_MS = 30000;
+
 let lastRequestAt = 0;
 
 async function waitForRateLimit(): Promise<void> {
@@ -35,6 +39,7 @@ export async function fetchNetkeibaHtml(
         "User-Agent": NETKEIBA_USER_AGENT,
         "Accept-Language": "ja,en;q=0.8",
       },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) {
       console.warn(`[netkeiba] ${url} -> HTTP ${response.status}`);

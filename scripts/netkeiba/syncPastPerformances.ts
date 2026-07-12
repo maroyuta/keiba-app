@@ -1,22 +1,7 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { fetchNetkeibaHtml } from "./httpClient";
 import { parseRaceResultHtml, type ParsedRaceResult } from "./parseRaceResult";
-
-// JV-Linkと同じくWindows PC側のバッチから叩く想定のためAPI Routeとは別クライアントを持つ。
-// service_roleキーはこのプロセス限りで使い、Next.js側のコードとは共有しない。
-function createSyncClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) {
-    throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が環境変数に設定されていません",
-    );
-  }
-  return createSupabaseClient<Database>(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+import { createNetkeibaSyncClient } from "./supabaseClient";
 
 export interface SyncSummary {
   raceId: string;
@@ -30,7 +15,7 @@ function buildResultUrl(raceId: string): string {
 }
 
 async function upsertParsedResult(
-  supabase: ReturnType<typeof createSyncClient>,
+  supabase: ReturnType<typeof createNetkeibaSyncClient>,
   parsed: ParsedRaceResult,
   raceId: string,
 ): Promise<{ upserted: number; skippedUnknownHorses: string[] }> {
@@ -108,7 +93,7 @@ async function upsertParsedResult(
 // レースIDのリストを順番に (レート制限を守りながら) 同期する。
 // 1件の失敗が全体を止めないよう、各レースごとにtry/catchで握りつぶして次に進む。
 export async function syncPastPerformances(raceIds: string[]): Promise<SyncSummary[]> {
-  const supabase = createSyncClient();
+  const supabase = createNetkeibaSyncClient();
   const summaries: SyncSummary[] = [];
 
   for (const raceId of raceIds) {
