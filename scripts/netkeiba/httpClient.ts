@@ -20,7 +20,14 @@ async function waitForRateLimit(): Promise<void> {
 }
 
 // 取得失敗時はnullを返す (呼び出し側でグレースフルデグラデーションする想定。例外は投げない)。
-export async function fetchNetkeibaHtml(url: string): Promise<string | null> {
+//
+// race.netkeiba.com は charset=UTF-8 だが、db.netkeiba.com (馬個別ページ) は
+// charset=euc-jp のため、fetchのResponse.text()(常にUTF-8として解釈する仕様)を
+// そのまま使うと文字化けする。encoding引数でバイト列から明示的にデコードする。
+export async function fetchNetkeibaHtml(
+  url: string,
+  encoding: "utf-8" | "euc-jp" = "utf-8",
+): Promise<string | null> {
   await waitForRateLimit();
   try {
     const response = await fetch(url, {
@@ -33,7 +40,11 @@ export async function fetchNetkeibaHtml(url: string): Promise<string | null> {
       console.warn(`[netkeiba] ${url} -> HTTP ${response.status}`);
       return null;
     }
-    return await response.text();
+    if (encoding === "utf-8") {
+      return await response.text();
+    }
+    const buffer = await response.arrayBuffer();
+    return new TextDecoder(encoding).decode(buffer);
   } catch (err) {
     console.warn(`[netkeiba] fetch failed for ${url}:`, err);
     return null;

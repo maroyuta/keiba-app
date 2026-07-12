@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "sync:netkeiba": "tsx scripts/netkeiba/run.ts",
-    "sync:netkeiba:recent": "tsx scripts/netkeiba/syncRecentRaces.ts"
+    "sync:netkeiba:recent": "tsx scripts/netkeiba/syncRecentRaces.ts",
+    "sync:netkeiba:horse": "tsx scripts/netkeiba/runHorseHistory.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
