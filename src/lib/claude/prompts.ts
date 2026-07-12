@@ -477,3 +477,26 @@ export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
   };
   return JSON.stringify(payload, null, 2);
 }
+
+// screening(Haiku)用の軽量ペイロード。SCREENING_SYSTEM_PROMPTが要求するのは
+// 「レース全体のレベル・荒れ具合・回収率の見込みだけの概算判定」(個別馬の深掘りではない)ため、
+// buildRaceDataPayload()の血統/調教/種牡馬統計/過去走5走分は不要。オッズ・人気・頭数だけで
+// 「鉄板レースか」「少頭数か」「荒れそうか」は十分判定できる(2026-07-13、実測コストが
+// standardと同水準まで膨らんでいたため軽量化)。
+function serializeScreeningEntry(input: EntryDiagnosisInput) {
+  return {
+    horse_number: input.entry.horse_number,
+    post_position: input.entry.post_position,
+    horse_name: input.horse.horse_name,
+    odds_win: input.entry.odds_win,
+    expected_popularity: input.entry.expected_popularity,
+  };
+}
+
+export function buildScreeningPayload(input: RaceDiagnosisInput): string {
+  const payload = {
+    race: serializeRace(input.race),
+    entries: input.entries.map(serializeScreeningEntry),
+  };
+  return JSON.stringify(payload, null, 2);
+}

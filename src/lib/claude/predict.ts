@@ -3,6 +3,7 @@ import {
   DIAGNOSIS_SYSTEM_PROMPT,
   SCREENING_SYSTEM_PROMPT,
   buildRaceDataPayload,
+  buildScreeningPayload,
   type RaceDiagnosisInput,
   type DiagnosisResult,
   type ScreeningResult,
@@ -80,7 +81,7 @@ export async function screenRace(
     model: CLAUDE_MODELS.screening,
     max_tokens: 1024,
     system: SCREENING_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildRaceDataPayload(input) }],
+    messages: [{ role: "user", content: buildScreeningPayload(input) }],
   });
   return {
     result: parseJsonResponse<ScreeningResult>(extractText(message)),
