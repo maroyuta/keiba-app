@@ -51,10 +51,38 @@ export default async function RaceDiagnosisPage({
     { label: "ペース・展開想定", text: race.analysis_pace },
   ].filter((item) => item.text);
 
+  const buySection = race.honmei_horse_number && (
+    <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5">
+      <h2 className="text-xs font-semibold text-emerald-400">買い目</h2>
+      <p className="mt-1 text-xl font-bold text-white">
+        {race.honmei_horse_number}
+        {race.aite_horse_number && (
+          <span className="text-emerald-400"> → {race.aite_horse_number}</span>
+        )}
+        {race.bet_type && (
+          <span className="ml-2 text-sm font-normal text-zinc-400">
+            ({BET_TYPE_LABELS[race.bet_type as BetType]})
+          </span>
+        )}
+      </p>
+      {(race.bet_amount_wide || race.bet_amount_umaren) && (
+        <p className="mt-1 text-sm text-zinc-300">
+          {race.bet_amount_wide && `ワイド ${race.bet_amount_wide.toLocaleString()}円`}
+          {race.bet_amount_wide && race.bet_amount_umaren && " / "}
+          {race.bet_amount_umaren && `馬連 ${race.bet_amount_umaren.toLocaleString()}円`}
+        </p>
+      )}
+    </section>
+  );
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6 sm:px-6">
-        <header className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+        <header className="relative flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+          <div className="absolute top-4 right-4">
+            <RankBadge rank={race.race_rank as RaceRank | null} />
+          </div>
+
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs font-medium text-emerald-400/90">
             <span>{race.keibajo_name}</span>
             <span className="text-zinc-600">・</span>
@@ -87,13 +115,10 @@ export default async function RaceDiagnosisPage({
             )}
           </div>
 
-          <div className="flex items-center justify-center gap-3">
-            <h1 className="text-center text-2xl font-bold text-white">
-              {race.grade && <span className="mr-2 text-amber-400">{race.grade}</span>}
-              {race.race_number}R {race.race_name || race.race_class || "—"}
-            </h1>
-            <RankBadge rank={race.race_rank as RaceRank | null} />
-          </div>
+          <h1 className="text-center text-2xl font-bold text-white">
+            {race.grade && <span className="mr-2 text-amber-400">{race.grade}</span>}
+            {race.race_number}R {race.race_name || race.race_class || "—"}
+          </h1>
 
           <div className="text-center text-xs text-zinc-400">
             {race.race_date}
@@ -102,7 +127,7 @@ export default async function RaceDiagnosisPage({
 
           {race.bias_note && (
             <p className="text-center text-sm text-zinc-300">
-              <span className="text-zinc-500">展開想定:</span> {race.bias_note}
+              <span className="text-zinc-500">トラックバイアス:</span> {race.bias_note}
             </p>
           )}
 
@@ -127,29 +152,7 @@ export default async function RaceDiagnosisPage({
           />
         </header>
 
-        {race.honmei_horse_number && (
-          <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5">
-            <h2 className="text-xs font-semibold text-emerald-400">買い目</h2>
-            <p className="mt-1 text-xl font-bold text-white">
-              {race.honmei_horse_number}
-              {race.aite_horse_number && (
-                <span className="text-emerald-400"> → {race.aite_horse_number}</span>
-              )}
-              {race.bet_type && (
-                <span className="ml-2 text-sm font-normal text-zinc-400">
-                  ({BET_TYPE_LABELS[race.bet_type as BetType]})
-                </span>
-              )}
-            </p>
-            {(race.bet_amount_wide || race.bet_amount_umaren) && (
-              <p className="mt-1 text-sm text-zinc-300">
-                {race.bet_amount_wide && `ワイド ${race.bet_amount_wide.toLocaleString()}円`}
-                {race.bet_amount_wide && race.bet_amount_umaren && " / "}
-                {race.bet_amount_umaren && `馬連 ${race.bet_amount_umaren.toLocaleString()}円`}
-              </p>
-            )}
-          </section>
-        )}
+        {buySection}
 
         <section className="flex flex-col gap-2">
           {sortedEntries.map((entry) => (
@@ -201,6 +204,8 @@ export default async function RaceDiagnosisPage({
             </dl>
           </section>
         )}
+
+        {buySection}
       </div>
     </div>
   );
