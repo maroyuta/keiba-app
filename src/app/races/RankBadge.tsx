@@ -1,15 +1,15 @@
 import type { RaceRank } from "@/lib/supabase/database.types";
 
 const RANK_BADGE_STYLES: Record<RaceRank, string> = {
-  S: "bg-amber-400 text-amber-950 dark:bg-amber-400 dark:text-amber-950",
-  A: "bg-emerald-500 text-white dark:bg-emerald-500",
-  B: "bg-sky-500 text-white dark:bg-sky-500",
-  C: "bg-zinc-400 text-white dark:bg-zinc-500",
+  S: "bg-emerald-400 text-emerald-950",
+  A: "bg-teal-500 text-white",
+  B: "bg-sky-500 text-white",
+  C: "bg-zinc-600 text-zinc-100",
 };
 
 export function RankBadge({ rank }: { rank: RaceRank | null }) {
   if (!rank) {
-    return <span className="text-zinc-400 dark:text-zinc-500">—</span>;
+    return <span className="text-zinc-500">—</span>;
   }
   return (
     <span

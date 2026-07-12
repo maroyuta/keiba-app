@@ -44,12 +44,12 @@ export function DiagnoseButton({
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex gap-2">
+      <div className="flex justify-center gap-2">
         <button
           type="button"
           onClick={() => runDiagnosis()}
           disabled={status === "loading"}
-          className="self-start rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          className="self-start rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-emerald-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {status === "loading" ? "診断中… (最大1分ほどかかります)" : hasResult ? "再診断する" : "診断する"}
         </button>
@@ -58,13 +58,13 @@ export function DiagnoseButton({
             type="button"
             onClick={() => runDiagnosis("premium")}
             disabled={premiumStatus === "loading"}
-            className="self-start rounded-full border border-amber-500 px-4 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-400 dark:hover:bg-amber-950"
+            className="self-start rounded-full border border-amber-400 px-4 py-2 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {premiumStatus === "loading" ? "本気診断中… (3分ほどかかります)" : "本気診断する"}
           </button>
         )}
       </div>
-      {errorMessage && <p className="text-sm text-red-500">{errorMessage}</p>}
+      {errorMessage && <p className="text-center text-sm text-red-400">{errorMessage}</p>}
     </div>
   );
 }
