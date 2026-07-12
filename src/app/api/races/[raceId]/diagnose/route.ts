@@ -19,50 +19,75 @@ const PAST_PERFORMANCE_LIMIT = 5;
 const TRAINING_SESSION_LIMIT = 3;
 
 // トラックバイアスはその時の馬場状態次第のため、直近の実データを根拠にする。
-// - 日曜のレース: 前日(土曜)の同場レースを参照
-// - それ以外 (基本的に土曜): 直近の同場開催 (先週の同場。開催初週なら前年以前の同時期開催まで遡る) を参照
+// - 日曜のレース: [今週土曜の同場, 先週の同場] の最大2件を参照 (2026-07-13、ユーザー指摘により
+//   土曜だけでなく先週分も追加。片方だけしか見つからない場合はあるものだけ返す)
+// - それ以外 (基本的に土曜): 直近の同場開催 (先週の同場。開催初週なら前年以前の同時期開催まで遡る) を1件参照
 // bias_noteが未診断でnullのレースは参照候補から除外する (診断済みレースのみが実データを持つため)。
-async function findBiasReferenceRace(
+async function findBiasReferenceRaces(
   supabase: SupabaseAdminClient,
   race: RaceRow,
-): Promise<{ id: string; reference: BiasReferenceRace } | null> {
+): Promise<Array<{ id: string; reference: BiasReferenceRace }>> {
   const raceDate = new Date(`${race.race_date}T00:00:00Z`);
   const dayOfWeek = raceDate.getUTCDay(); // 0=日, 6=土
 
-  let query = supabase
-    .from("races")
-    .select("id, race_date, track_condition, bias_note")
-    .eq("keibajo_code", race.keibajo_code)
-    .neq("id", race.id)
-    .not("bias_note", "is", null)
-    .lt("race_date", race.race_date)
-    .order("race_date", { ascending: false })
-    .limit(1);
+  async function findMostRecentBefore(beforeDate: string) {
+    const { data } = await supabase
+      .from("races")
+      .select("id, race_date, track_condition, bias_note")
+      .eq("keibajo_code", race.keibajo_code)
+      .neq("id", race.id)
+      .not("bias_note", "is", null)
+      .lt("race_date", beforeDate)
+      .order("race_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data;
+  }
+
+  async function findExact(dateStr: string) {
+    const { data } = await supabase
+      .from("races")
+      .select("id, race_date, track_condition, bias_note")
+      .eq("keibajo_code", race.keibajo_code)
+      .neq("id", race.id)
+      .eq("race_date", dateStr)
+      .not("bias_note", "is", null)
+      .limit(1)
+      .maybeSingle();
+    return data;
+  }
+
+  function toResult(data: { id: string; race_date: string; track_condition: string | null; bias_note: string | null }) {
+    return {
+      id: data.id,
+      reference: {
+        raceDate: data.race_date,
+        trackCondition: data.track_condition,
+        biasNote: data.bias_note,
+      },
+    };
+  }
+
+  const results: Array<{ id: string; reference: BiasReferenceRace }> = [];
 
   if (dayOfWeek === 0) {
     const saturday = new Date(raceDate);
     saturday.setUTCDate(saturday.getUTCDate() - 1);
     const saturdayStr = saturday.toISOString().slice(0, 10);
-    query = supabase
-      .from("races")
-      .select("id, race_date, track_condition, bias_note")
-      .eq("keibajo_code", race.keibajo_code)
-      .eq("race_date", saturdayStr)
-      .not("bias_note", "is", null)
-      .limit(1);
+
+    const satData = await findExact(saturdayStr);
+    if (satData) results.push(toResult(satData));
+
+    // 「先週」は今週土曜より前の直近レースを探す (race.race_date基準だと今週土曜自身を
+    // 拾ってしまい重複するため、saturdayStrを起点にする)
+    const lastWeekData = await findMostRecentBefore(saturdayStr);
+    if (lastWeekData) results.push(toResult(lastWeekData));
+  } else {
+    const data = await findMostRecentBefore(race.race_date);
+    if (data) results.push(toResult(data));
   }
 
-  const { data } = await query.maybeSingle();
-  if (!data) return null;
-
-  return {
-    id: data.id,
-    reference: {
-      raceDate: data.race_date,
-      trackCondition: data.track_condition,
-      biasNote: data.bias_note,
-    },
-  };
+  return results;
 }
 
 async function loadRaceDiagnosisInput(
@@ -170,7 +195,7 @@ async function loadRaceDiagnosisInput(
     nickStatsByPair.set(key, list);
   }
 
-  const biasReference = await findBiasReferenceRace(supabase, race);
+  const biasReferences = await findBiasReferenceRaces(supabase, race);
 
   return {
     input: {
@@ -194,9 +219,11 @@ async function loadRaceDiagnosisInput(
         ...rc,
         criteria: rc.prediction_criteria,
       })),
-      biasReferenceRace: biasReference?.reference ?? null,
+      biasReferenceRaces: biasReferences.map((r) => r.reference),
     },
-    biasReferenceRaceId: biasReference?.id ?? null,
+    // DBのbias_reference_race_id(単一FK)には、参照した中で最初の1件(日曜なら今週土曜、
+    // 無ければ先週分)だけを記録する。プロンプトへは全件渡す。
+    biasReferenceRaceId: biasReferences[0]?.id ?? null,
   };
 }
 
@@ -321,23 +348,46 @@ export async function POST(
     return NextResponse.json({ tier: "skipped", reason: "未勝利戦は診断対象外" });
   }
 
-  // 一次スクリーニング (Haiku) でC評価なら、コスト削減のためここで打ち切る。
-  const screening = await screenRace(input);
-  await logUsage(supabase, raceId, "screening", screening.usage);
-  if (screening.result.race_rank === "C") {
+  // 重賞(grade設定あり)は「問答無用で購入する」対象のため、少頭数チェックにもscreeningの
+  // C足切りにも一切かからないようにする(2026-07-13、ユーザー指摘)。実際の購入判断
+  // (予算12,000円への変更含む)はSTANDARD/PREMIUM_SYSTEM_PROMPTの「重賞は問答無用で購入する」
+  // 節に委ねる。
+  const isGraded = input.race.grade !== null;
+
+  // 少頭数レース(11頭以下)は払い戻しに期待できないため、screening(Haikuの費用)すら呼ばず
+  // 機械的にrace_rank=Cとする(2026-07-13、ユーザー指摘。「見送り」ではなく明示的にC評価として
+  // 記録する点が上の3つのskip対象と異なる)。重賞は対象外(下記isGraded除外)。
+  const SMALL_FIELD_MAX_ENTRIES = 11;
+  if (!isGraded && input.race.entry_count !== null && input.race.entry_count <= SMALL_FIELD_MAX_ENTRIES) {
+    const reason = `少頭数(${input.race.entry_count}頭、11頭以下)のため馬券対象外`;
     await supabase
       .from("races")
-      .update({
+      .update({ race_rank: "C", race_rank_reason: reason, bias_reference_race_id: biasReferenceRaceId })
+      .eq("id", raceId);
+    return NextResponse.json({ tier: "screening", race_rank: "C", race_rank_reason: reason });
+  }
+
+  // 一次スクリーニング (Haiku) でC評価なら、コスト削減のためここで打ち切る。
+  // 重賞はscreening自体をスキップしてstandardへ直行する(C評価で打ち切られると
+  // honmei/aiteが生成されず「問答無用で購入」を実現できないため)。
+  if (!isGraded) {
+    const screening = await screenRace(input);
+    await logUsage(supabase, raceId, "screening", screening.usage);
+    if (screening.result.race_rank === "C") {
+      await supabase
+        .from("races")
+        .update({
+          race_rank: screening.result.race_rank,
+          race_rank_reason: screening.result.race_rank_reason,
+          bias_reference_race_id: biasReferenceRaceId,
+        })
+        .eq("id", raceId);
+      return NextResponse.json({
+        tier: "screening",
         race_rank: screening.result.race_rank,
         race_rank_reason: screening.result.race_rank_reason,
-        bias_reference_race_id: biasReferenceRaceId,
-      })
-      .eq("id", raceId);
-    return NextResponse.json({
-      tier: "screening",
-      race_rank: screening.result.race_rank,
-      race_rank_reason: screening.result.race_rank_reason,
-    });
+      });
+    }
   }
 
   // 標準診断 (Sonnet)。S評価が出ても自動ではOpusへ進まず、「本気診断」ボタンの手動実行に委ねる。
