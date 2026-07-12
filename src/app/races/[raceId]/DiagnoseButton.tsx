@@ -8,15 +8,19 @@ export function DiagnoseButton({
   hasResult,
   raceRank,
   raceClass,
+  raceGrade,
 }: {
   raceId: string;
   hasResult: boolean;
   raceRank: "S" | "A" | "B" | "C" | null;
   raceClass: string | null;
+  raceGrade: string | null;
 }) {
   const router = useRouter();
+  // 重賞はrace_rankによらず本気診断の対象にする(route.tsの重賞バイパスと揃える。
+  // 2026-07-13、B/C評価の重賞がボタンから漏れるバグを修正)。
   const isPremiumEligible =
-    (raceRank === "S" || raceRank === "A") &&
+    (raceGrade !== null || raceRank === "S" || raceRank === "A") &&
     !raceClass?.includes("未勝利") &&
     !raceClass?.includes("新馬");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");

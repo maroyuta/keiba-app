@@ -149,6 +149,7 @@ export default async function RaceDiagnosisPage({
             hasResult={race.race_rank !== null}
             raceRank={race.race_rank as RaceRank | null}
             raceClass={race.race_class}
+            raceGrade={race.grade}
           />
         </header>
 

@@ -315,6 +315,9 @@ export async function POST(
   // 実際の深掘り調査はA以上のレース全てでpremiumに任せる二段階構成にした)。
   // 未勝利・新馬戦はA/S評価が出てもOpusへはエスカレーションさせず、Sonnet(standard)止まりにする
   // (新馬戦は下のscreening前スキップで元々standardにも到達しないが、念のためここでも明示的に弾く)。
+  // 重賞はrace_rankによらず対象にする(2026-07-13、バグ修正: 「重賞は問答無用で購入・予算12,000円」の
+  // 対象なのに、race_rankがB/Cだと本気診断の対象から外れてしまう矛盾があった。最も金額の大きい
+  // 賭けになるレースほど深掘り調査から漏れる、という逆転を防ぐ)。
   if (wantsPremium) {
     if (input.race.race_class?.includes("未勝利") || input.race.race_class?.includes("新馬")) {
       return NextResponse.json(
@@ -322,9 +325,10 @@ export async function POST(
         { status: 400 },
       );
     }
-    if (input.race.race_rank !== "S" && input.race.race_rank !== "A") {
+    const isGradedForPremium = input.race.grade !== null;
+    if (!isGradedForPremium && input.race.race_rank !== "S" && input.race.race_rank !== "A") {
       return NextResponse.json(
-        { error: "本気診断はA評価以上のレースのみ実行できます" },
+        { error: "本気診断はA評価以上、または重賞のレースのみ実行できます" },
         { status: 400 },
       );
     }
