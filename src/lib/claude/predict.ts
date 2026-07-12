@@ -1,9 +1,11 @@
 import { anthropic, CLAUDE_MODELS, extractText } from "./client";
 import {
-  DIAGNOSIS_SYSTEM_PROMPT,
+  STANDARD_SYSTEM_PROMPT,
+  PREMIUM_SYSTEM_PROMPT,
   SCREENING_SYSTEM_PROMPT,
   buildRaceDataPayload,
   buildScreeningPayload,
+  buildStandardPayload,
   type RaceDiagnosisInput,
   type DiagnosisResult,
   type ScreeningResult,
@@ -98,8 +100,8 @@ export async function diagnoseRaceStandard(
     max_tokens: 16000,
     thinking: { type: "adaptive" },
     output_config: { effort: "high" },
-    system: DIAGNOSIS_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildRaceDataPayload(input) }],
+    system: STANDARD_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: buildStandardPayload(input) }],
   });
   const message = await stream.finalMessage();
   return {
@@ -108,7 +110,7 @@ export async function diagnoseRaceStandard(
   };
 }
 
-// 重要レース診断 (Opus 4.8): 「本気で買う」と判定したレースのみのフル診断。
+// 重要レース診断 (Opus 4.8): race_rankがA/Sだったレースのみ、血統・調教まで含めたフル診断。
 export async function diagnoseRacePremium(
   input: RaceDiagnosisInput,
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
@@ -117,7 +119,7 @@ export async function diagnoseRacePremium(
     max_tokens: 32000,
     thinking: { type: "adaptive" },
     output_config: { effort: "xhigh" },
-    system: DIAGNOSIS_SYSTEM_PROMPT,
+    system: PREMIUM_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildRaceDataPayload(input) }],
   });
   const message = await stream.finalMessage();

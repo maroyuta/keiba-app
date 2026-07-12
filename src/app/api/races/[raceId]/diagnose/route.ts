@@ -283,8 +283,10 @@ export async function POST(
   }
   const { input, biasReferenceRaceId } = loaded;
 
-  // 「本気診断」ボタン: standardでS評価が出たレースのみ、手動でOpusへ深掘りさせる。
-  // 未勝利・新馬戦はS評価が出てもOpusへはエスカレーションさせず、Sonnet(standard)止まりにする
+  // 「本気診断」ボタン: standardでA/S評価が出たレースのみ、手動でOpusへ深掘りさせる
+  // (2026-07-13、S限定からA以上に緩和。standardは血統/調教を見ない軽量tierになったため、
+  // 実際の深掘り調査はA以上のレース全てでpremiumに任せる二段階構成にした)。
+  // 未勝利・新馬戦はA/S評価が出てもOpusへはエスカレーションさせず、Sonnet(standard)止まりにする
   // (新馬戦は下のscreening前スキップで元々standardにも到達しないが、念のためここでも明示的に弾く)。
   if (wantsPremium) {
     if (input.race.race_class?.includes("未勝利") || input.race.race_class?.includes("新馬")) {
@@ -293,9 +295,9 @@ export async function POST(
         { status: 400 },
       );
     }
-    if (input.race.race_rank !== "S") {
+    if (input.race.race_rank !== "S" && input.race.race_rank !== "A") {
       return NextResponse.json(
-        { error: "本気診断はS評価のレースのみ実行できます" },
+        { error: "本気診断はA評価以上のレースのみ実行できます" },
         { status: 400 },
       );
     }

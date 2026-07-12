@@ -16,7 +16,9 @@ export function DiagnoseButton({
 }) {
   const router = useRouter();
   const isPremiumEligible =
-    raceRank === "S" && !raceClass?.includes("未勝利") && !raceClass?.includes("新馬");
+    (raceRank === "S" || raceRank === "A") &&
+    !raceClass?.includes("未勝利") &&
+    !raceClass?.includes("新馬");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [premiumStatus, setPremiumStatus] = useState<"idle" | "loading" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

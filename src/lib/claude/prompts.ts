@@ -105,18 +105,6 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
 
 データに拡張予想軸 (criteria_scores) が含まれる場合は、それらも評価に織り込むこと。
 
-## 血統・調教データの扱い
-
-- **血統 (pedigree)**: 3代血統 (父・母・父父・父母・母父・母母・父父父〜母母母の14頭) が入っている場合、
-  距離適性・馬場適性・早熟晩成傾向の判断材料にする。同じ祖先が複数箇所に出てくる場合はインブリードとして
-  注記してよい。sire_stats/nick_stats (該当する父・父×母父の距離帯/馬場/コース別成績、starts件数と
-  roi_win_pct(単勝回収率、100が収支トントン)を含む) がある場合はそれも判断材料にするが、starts件数が
-  少ない(目安10未満)統計は参考程度に留め、断定的な根拠にしない
-- **調教 (training_sessions)**: 絶対タイムでの閾値判定はしない。同じ馬の直近セッション同士の相対比較
-  (自己ベース比で今回は良化/悪化しているか) を基本にする。lap_times_secはゴール手前メートル数をキーにした
-  ラップタイムなので、末脚(200/400地点)のタイムに注目するとよい。厩舎(trainer_name)の「本気パターン」との
-  比較データがある場合はそれも使うが、無い場合は自己ベース比だけで判断し、無理に決めつけない
-
 ## リサーチルール
 
 - 人気に関わらず全頭、直近3走以上を1頭ずつ精査する
@@ -231,6 +219,20 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
   全頭診断自体は通常通り行うこと。honmei/aiteの選定対象から外すのみ)
 - 回収率を重視する`;
 
+// premium(Opus)専用。standardは血統/調教データを渡さない軽量ペイロードのため、この節は
+// standardのプロンプトには含めない(2026-07-13、コスト削減のためtier間で調査の深さを分離)。
+const PEDIGREE_TRAINING_RULES = `## 血統・調教データの扱い
+
+- **血統 (pedigree)**: 3代血統 (父・母・父父・父母・母父・母母・父父父〜母母母の14頭) が入っている場合、
+  距離適性・馬場適性・早熟晩成傾向の判断材料にする。同じ祖先が複数箇所に出てくる場合はインブリードとして
+  注記してよい。sire_stats/nick_stats (該当する父・父×母父の距離帯/馬場/コース別成績、starts件数と
+  roi_win_pct(単勝回収率、100が収支トントン)を含む) がある場合はそれも判断材料にするが、starts件数が
+  少ない(目安10未満)統計は参考程度に留め、断定的な根拠にしない
+- **調教 (training_sessions)**: 絶対タイムでの閾値判定はしない。同じ馬の直近セッション同士の相対比較
+  (自己ベース比で今回は良化/悪化しているか) を基本にする。lap_times_secはゴール手前メートル数をキーにした
+  ラップタイムなので、末脚(200/400地点)のタイムに注目するとよい。厩舎(trainer_name)の「本気パターン」との
+  比較データがある場合はそれも使うが、無い場合は自己ベース比だけで判断し、無理に決めつけない`;
+
 const RACE_RANK_RULES = `## レース投資判断
 
 診断表作成前に、レース自体をS/A/B/Cで評価する (race_rank)。個別馬のランクとは別軸。
@@ -292,9 +294,20 @@ const OUTPUT_FORMAT_RULES = `## 出力形式
   ]
 }`;
 
-export const DIAGNOSIS_SYSTEM_PROMPT = [
+// standard(Sonnet): 血統/調教データは渡さない軽量tier。screening通過後の「軽い精査」役。
+export const STANDARD_SYSTEM_PROMPT = [
   PHILOSOPHY_RULES,
   CORE_RULES,
+  RACE_RANK_RULES,
+  CRITERIA_SUGGESTION_RULES,
+  OUTPUT_FORMAT_RULES,
+].join("\n\n");
+
+// premium(Opus): race_rankがA/Sだったレースのみ、血統・調教まで含めたフル調査で深掘りするtier。
+export const PREMIUM_SYSTEM_PROMPT = [
+  PHILOSOPHY_RULES,
+  CORE_RULES,
+  PEDIGREE_TRAINING_RULES,
   RACE_RANK_RULES,
   CRITERIA_SUGGESTION_RULES,
   OUTPUT_FORMAT_RULES,
@@ -475,7 +488,7 @@ export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
     entries: input.entries.map(serializeEntry),
   };
-  return JSON.stringify(payload, null, 2);
+  return JSON.stringify(payload);
 }
 
 // screening(Haiku)用の軽量ペイロード。SCREENING_SYSTEM_PROMPTが要求するのは
@@ -498,5 +511,47 @@ export function buildScreeningPayload(input: RaceDiagnosisInput): string {
     race: serializeRace(input.race),
     entries: input.entries.map(serializeScreeningEntry),
   };
-  return JSON.stringify(payload, null, 2);
+  return JSON.stringify(payload);
+}
+
+// standard(Sonnet)用の中量ペイロード。STANDARD_SYSTEM_PROMPTは血統・調教データの扱いを
+// 指示していない(PEDIGREE_TRAINING_RULESはpremium専用)ため、pedigree/training_sessions/
+// sire_stats/nick_statsは渡さない。過去走もpremiumの5走ではなく直近3走に絞る
+// (2026-07-13、A/S評価のレースだけpremiumでフル調査する二段階構成に変更したため)。
+const STANDARD_PAST_PERFORMANCE_LIMIT = 3;
+
+function serializeStandardEntry(input: EntryDiagnosisInput) {
+  return {
+    post_position: input.entry.post_position,
+    horse_number: input.entry.horse_number,
+    horse: serializeHorse(input.horse),
+    jockey_name: input.entry.jockey_name,
+    jockey_weight_kg: input.entry.jockey_weight_kg,
+    horse_weight_kg: input.entry.horse_weight_kg,
+    horse_weight_diff_kg: input.entry.horse_weight_diff_kg,
+    blinkers_change: input.entry.blinkers_change,
+    equipment_note: input.entry.equipment_note,
+    odds_win: input.entry.odds_win,
+    expected_popularity: input.entry.expected_popularity,
+    past_performances: input.pastPerformances
+      .slice(0, STANDARD_PAST_PERFORMANCE_LIMIT)
+      .map(serializePastPerformance),
+    criteria_scores: input.criteriaScores.map(serializeCriteriaScore),
+  };
+}
+
+export function buildStandardPayload(input: RaceDiagnosisInput): string {
+  const payload = {
+    race: serializeRace(input.race),
+    bias_reference_race: input.biasReferenceRace
+      ? {
+          race_date: input.biasReferenceRace.raceDate,
+          track_condition: input.biasReferenceRace.trackCondition,
+          bias_note: input.biasReferenceRace.biasNote,
+        }
+      : null,
+    race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
+    entries: input.entries.map(serializeStandardEntry),
+  };
+  return JSON.stringify(payload);
 }
