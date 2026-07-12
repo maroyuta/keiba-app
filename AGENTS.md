@@ -47,8 +47,17 @@ This version has breaking changes — APIs, conventions, and file structure may 
 発売開始後の単勝オッズをリアルタイム取得できることを実機で確認した。本日開催の「七夕賞」
 (福島2回6日目11R)で実際に16頭全頭の`race_entries.odds_win`(4.7倍〜100.6倍)・
 `expected_popularity`(1〜16位)をSupabaseへ反映済み(詳細は`scripts/jvlink/README.md`
-「fetch_odds.py」節参照)。**⚠️`run_weekly_sync.py`にはまだ未組み込み**(レース単位・
-当日随時実行が前提のため、週次バッチとはライフサイクルが異なり別オーケストレーターが必要)。
+「fetch_odds.py」節参照)。
+**✅ 2026-07-13、Mac側で定期実行オーケストレーター`scripts/jvlink/run_odds_watch.py`を新設(設計のみ、
+Windows実機検証は未実施)。** 当日のまだ発走していない全レースを対象にfetch_odds→parse_records→
+load_to_supabase(--o1-csvのみ)を繰り返す設計で、Windowsタスクスケジューラから開催日の朝〜夕方まで
+15〜30分間隔で叩く想定(詳細は`scripts/jvlink/README.md`「run_odds_watch.py」節参照)。
+**この過程で`races.post_time`が既存144件超のうち1件しか埋まっていないバグを発見・修正した**
+(`parse_records.py`はhasso_timeを正しくパース済みだったが、`load_to_supabase.py`の
+`build_race_payload()`がpost_time列へマッピングしていなかった配線漏れ。`to_time()`ヘルパーを
+追加し修正済み、境界値はMac側でユニットテスト済み)。**⚠️次回Windows側で`run_weekly_sync.py`を
+実行した時点でpost_timeが実際に埋まるかの確認、および`run_odds_watch.py`本体のJV-Link実機検証・
+タスクスケジューラ登録がまだ残っている。**
 
 **回収率トラッキング(HR配当パース→`race_payouts`→`compute_recommendation_results.py`): 完了 ✅ (2026-07-12)。** Windowsタスクスケジューラに登録済み(毎週月曜7:00、`run_weekly_sync.py`の6:00より後)。「本当に的中したケースで実結果と一致するか」のend-to-end検証だけまだ(次回、確定済みレースに実際の診断が出た時点で自然に検証できる見込み)。
 

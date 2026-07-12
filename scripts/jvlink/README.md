@@ -179,14 +179,53 @@ python load_to_supabase.py out/RA_parsed.csv out/SE_parsed.csv --env-file .env.j
 ```
 
 **現状の制約:**
-- `run_weekly_sync.py`にはまだ組み込んでいない(週次バッチはレース確定後データが対象のため、
-  レース単位・当日随時実行が前提のオッズ取得とはライフサイクルが異なる。当日朝〜発走前に
-  対象レースのrace_keyを列挙して繰り返し呼ぶような別オーケストレーターが別途必要)
 - 複勝(`fukusho_odds_low/high`)・枠連(`wakuren_kumi/odds`)は`parse_o1()`でパース済みだが、
   `load_to_supabase.py`側では単勝(`odds_win`/`expected_popularity`)しかSupabaseへ反映していない
   (race_entriesに複勝・枠連オッズを格納する列が無いため。必要になったら別テーブル設計を検討)
 - 時系列でのオッズ変動追跡(発売開始直後→直前でどう動いたか)は未対応。`load_to_supabase.py`は
   現在値で`race_entries`を上書きするのみ
+
+## run_odds_watch.py (レース前オッズの定期実行オーケストレーター、2026-07-13追加、Windows未検証)
+
+`run_weekly_sync.py`と同じ役割分担で、fetch_odds.pyの「当日朝〜発売開始後、繰り返し呼ぶ
+オーケストレーターが別途必要」という課題に対応するスクリプト。1回の実行で、その日
+(`race_date`=当日)のまだ発走していない全レースを対象にfetch_odds→parse_records→
+load_to_supabase(--o1-csvのみ)を順に呼ぶ。Windowsタスクスケジューラから開催日の朝〜夕方まで
+15〜30分間隔程度で繰り返し実行する想定(例: 8:00〜17:00の間、`schtasks`の`/sc minute /mo 15`や
+`/ri`+`/du`での繰り返し設定。実機での間隔調整はWindows側で行うこと)。
+
+**対象レースの絞り込みには`races.post_time`が必須。** post_timeが無いレースは「まだ発走時刻不明」
+として無条件にスキップしてしまう(=このオーケストレーターが機能しない)ため、下記の
+post_time書き込みバグの修正が前提になる。
+
+**⚠️Windows実機での検証はまだ行っていない(Mac側での設計・ロジック検証のみ)。**
+race_keyの組み立て(`to_race_key()`)は既知の七夕賞の例(`jv_race_key="202603020611"`,
+`race_date="2026-07-12"` → `race_key="2026071203020611"`)で一致することをMac側で確認済みだが、
+実際にWindows上でJV-Link経由の疎通・タスクスケジューラ登録までは未実施。
+
+**load_to_supabase.pyのra_csv/se_csvについて:** オッズ単体更新ではその日の新しいRA/SEデータを
+持たないため、意図的に空ファイル(0バイト)を渡す設計にした。空ファイルは`csv.DictReader`で
+0行として読まれ、races/horses/race_entriesへのupsertは発生しない(`upsert()`は空リストなら
+即returnする実装のため安全)。README冒頭の`fetch_odds.py`使用例のように前回`run_weekly_sync.py`の
+`out/`を使い回すと、古いRA/SEデータで意図せず上書きしてしまうリスクがあるため、このスクリプトでは
+採用しなかった。
+
+## post_time(発走時刻)がSupabaseに書き込まれていなかったバグの修正(2026-07-13)
+
+**発見の経緯:** `run_odds_watch.py`の設計中、Supabase上の`races.post_time`を実際にクエリしたところ、
+既存144件超のレースのうち**post_timeが入っていたのはわずか1件**だった。`parse_records.py`は
+RAレコードから`hasso_time`(発走時刻、HHMM形式4桁)を既に正しくパースしていたが、
+`load_to_supabase.py`の`build_race_payload()`がこの値を`post_time`列にマッピングしていなかった
+(単純な配線漏れ)。
+
+**修正内容:** `to_time()`ヘルパー(HHMM文字列 → Postgres time型の`"HH:MM:00"`、空白/非数値/
+不正な時分はNone)を追加し、`build_race_payload()`に`"post_time": to_time(row.get("hasso_time", ""))`
+を追加した。境界値(`'1545'`→`'15:45:00'`、空文字/空白/`'99'`/`'2500'`→`None`)はMac側で
+ユニットテスト済み(スクラッチのみ、リポジトリには未追加)。
+
+**⚠️注意:** この修正は次回`run_weekly_sync.py`が実行されたタイミングでその回に含まれるレースから
+反映される。既存のSupabase上のレース(post_timeが空のまま)を遡って埋め直す一括更新は未実施
+(生のJV-Link CSVがWindows側にしか無く、Mac側からは再生成できないため)。
 
 ## load_to_supabase.py の既知の制約・要検証事項
 

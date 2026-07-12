@@ -112,6 +112,18 @@ def to_int(value: str) -> "int | None":
         return None
 
 
+def to_time(value: str) -> "str | None":
+    """JV-DataのHHMM形式(4桁、例: '1545')をPostgresのtime型文字列('15:45:00')に変換する。
+    未確定時は空白/ゼロ埋めで来るため、数字4桁として解釈できない場合はNoneにする"""
+    value = (value or "").strip()
+    if len(value) != 4 or not value.isdigit():
+        return None
+    hour, minute = value[:2], value[2:]
+    if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+        return None
+    return f"{hour}:{minute}:00"
+
+
 def to_float_scaled(value: str, scale: float) -> "float | None":
     value = (value or "").strip()
     if not value:
@@ -147,6 +159,7 @@ def build_race_payload(row: dict) -> dict:
         "track_type": guess_track_type(row.get("track_cd", "")),
         "distance_m": to_int(row.get("kyori", "")),
         "weather": WEATHER_NAMES.get(row.get("tenko_cd", "")),
+        "post_time": to_time(row.get("hasso_time", "")),
         # syusso_tosu(出走頭数)はレース確定後にしか埋まらない。未確定レースでも頭数の
         # 目安が使えるよう、無ければtoroku_tosu(登録頭数)にフォールバックする。
         "entry_count": to_int(row.get("syusso_tosu", "")) or to_int(row.get("toroku_tosu", "")),
