@@ -155,37 +155,69 @@ export default async function RaceDiagnosisPage({
         {buySection}
 
         <section className="flex flex-col gap-2">
-          {sortedEntries.map((entry) => (
-            <div
-              key={entry.id}
-              className={`flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 ${
-                entry.is_kesshi ? "opacity-50" : ""
-              }`}
-            >
-              <WakuBadge waku={entry.post_position} />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-xs text-zinc-500">{entry.horse_number}番</span>
-                  <span className="truncate font-bold text-white">{entry.horses.horse_name}</span>
-                  {entry.is_kesshi && (
-                    <span className="rounded bg-red-500/20 px-1 text-xs font-medium text-red-400">
-                      消
+          {sortedEntries.map((entry) => {
+            const isHonmei = entry.horse_number === race.honmei_horse_number;
+            const isAite = entry.horse_number === race.aite_horse_number;
+            const isDangerFavorite =
+              entry.expected_popularity !== null &&
+              entry.expected_popularity <= 5 &&
+              (entry.horse_rank === "B" || entry.horse_rank === "C");
+
+            return (
+              <div
+                key={entry.id}
+                className={`flex items-start gap-3 rounded-xl border p-3 ${
+                  isHonmei
+                    ? "border-amber-400/70 bg-amber-400/10 ring-1 ring-amber-400/40"
+                    : isAite
+                      ? "border-emerald-400/70 bg-emerald-400/10 ring-1 ring-emerald-400/40"
+                      : "border-zinc-800 bg-zinc-900/40"
+                } ${entry.is_kesshi ? "opacity-50" : ""}`}
+              >
+                <WakuBadge waku={entry.post_position} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-xs text-zinc-500">{entry.horse_number}番</span>
+                    <span className="truncate font-bold text-white">
+                      {entry.horses.horse_name}
                     </span>
+                    {isHonmei && (
+                      <span className="rounded bg-amber-400 px-1 text-xs font-bold text-amber-950">
+                        本命
+                      </span>
+                    )}
+                    {isAite && (
+                      <span className="rounded bg-emerald-400 px-1 text-xs font-bold text-emerald-950">
+                        相手
+                      </span>
+                    )}
+                    {entry.is_kesshi && (
+                      <span className="rounded bg-red-500/20 px-1 text-xs font-medium text-red-400">
+                        消
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-400/90">
+                    <span>
+                      {entry.expected_popularity ? `${entry.expected_popularity}人気` : "—"}
+                      {entry.odds_win !== null && ` (${formatOdds(entry.odds_win)}倍)`}
+                    </span>
+                    {isDangerFavorite && (
+                      <span className="rounded bg-red-500/20 px-1 text-[10px] font-medium text-red-400">
+                        危険な人気馬
+                      </span>
+                    )}
+                  </div>
+                  {entry.horse_rank_comment && (
+                    <p className="mt-1 text-sm leading-snug text-zinc-300">
+                      {entry.horse_rank_comment}
+                    </p>
                   )}
                 </div>
-                <div className="text-xs text-emerald-400/90">
-                  {entry.expected_popularity ? `${entry.expected_popularity}人気` : "—"}
-                  {entry.odds_win !== null && ` (${formatOdds(entry.odds_win)}倍)`}
-                </div>
-                {entry.horse_rank_comment && (
-                  <p className="mt-1 text-sm leading-snug text-zinc-300">
-                    {entry.horse_rank_comment}
-                  </p>
-                )}
+                <RankBadge rank={entry.horse_rank as RaceRank | null} />
               </div>
-              <RankBadge rank={entry.horse_rank as RaceRank | null} />
-            </div>
-          ))}
+            );
+          })}
         </section>
 
         {analysisItems.length > 0 && (

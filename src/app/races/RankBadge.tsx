@@ -1,7 +1,7 @@
 import type { RaceRank } from "@/lib/supabase/database.types";
 
 const RANK_BADGE_STYLES: Record<RaceRank, string> = {
-  S: "bg-emerald-400 text-emerald-950",
+  S: "bg-amber-400 text-amber-950",
   A: "bg-teal-500 text-white",
   B: "bg-sky-500 text-white",
   C: "bg-zinc-600 text-zinc-100",
