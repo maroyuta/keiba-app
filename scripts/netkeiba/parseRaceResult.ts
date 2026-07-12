@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
-import type { TrackCondition, TrackType, PaceMark } from "@/lib/supabase/database.types";
+import type { TrackCondition, TrackType, PaceMark, PayoutBetType } from "@/lib/supabase/database.types";
 
 // race.netkeiba.com/race/result.html?race_id=XXXXXXXXXXXX の実HTML構造 (2026-07時点) を元にした
 // パーサー。netkeiba側のマークアップ変更で壊れる可能性があるため、定期的な動作確認が必要。
@@ -43,6 +43,28 @@ export interface ParsedRaceResult {
   meta: ParsedRaceMeta;
   horses: ParsedHorseResult[];
 }
+
+export interface ParsedPayout {
+  betType: PayoutBetType;
+  combination: string; // 馬番を"-"で連結 (2頭なら昇順の"lo-hi"、単勝/複勝は馬番1つのみ)
+  payoutYen: number;
+  popularity: number | null;
+}
+
+// 着順ページの馬番(class="Result")の並びは券種ごとに異なるDOM構造なので、
+// 単勝/複勝(td.Result > div > span、値のあるdivのみ拾う)と、組番系
+// (td.Result > ul > li > span、liの並び順がそのまま組番)で別処理する。
+// 馬単・3連単は着順(並び順)が的中の条件そのものであり、単純な昇順ソートで保存すると
+// 情報が壊れてしまう。このアプリはワイド・馬連しか馬券対象にしないため、
+// 着順が意味を持たない券種(単勝・複勝・枠連・馬連・ワイド・3連複)のみ対応する。
+const ROW_CLASS_TO_BET_TYPE: Record<string, PayoutBetType> = {
+  Tansho: "win",
+  Fukusho: "place",
+  Wakuren: "wakuren",
+  Umaren: "umaren",
+  Wide: "wide",
+  Fuku3: "sanrenpuku",
+};
 
 const VENUE_NAMES: Record<string, string> = {
   "01": "札幌",
@@ -247,4 +269,76 @@ export function parseRaceResultHtml(html: string, raceId: string): ParsedRaceRes
     meta: parseRaceMeta($, html, raceId),
     horses,
   };
+}
+
+function parsePayoutRow($: cheerio.CheerioAPI, row: Element): ParsedPayout[] {
+  const $row = $(row);
+  const rowClass = ($row.attr("class") || "").trim();
+  const betType = ROW_CLASS_TO_BET_TYPE[rowClass];
+  if (!betType) return []; // 馬単・3連単など、順序を保存できない券種は対象外
+
+  // 単勝・複勝: td.Result > div > span (値のあるdivだけが実際の着順馬番、他は空div)
+  // 組番系(枠連/馬連/ワイド/3連複): td.Result > ul > li > span (ulが1組、liの並びは着順ではなく組番)
+  let combos: string[];
+  const uls = $row.find("td.Result ul").toArray();
+  if (uls.length > 0) {
+    combos = uls.map((ul) => {
+      const nums = $(ul)
+        .find("li span")
+        .toArray()
+        .map((span) => $(span).text().trim())
+        .filter((text) => text.length > 0)
+        .map(Number)
+        .sort((a, b) => a - b);
+      return nums.join("-");
+    });
+  } else {
+    combos = $row
+      .find("td.Result div span")
+      .toArray()
+      .map((span) => $(span).text().trim())
+      .filter((text) => text.length > 0);
+  }
+
+  // td.Payoutは複数行(複勝・ワイド等)でも別々の<span>には分かれておらず、1つの<span>内で
+  // <br>区切りになっている(td.Ninkiは逆に別々の<span>に分かれている、netkeiba側の非対称なマークアップ)。
+  // そのためspan単位ではなくtd全体のHTMLを<br>で分割する。
+  const payoutHtml = $row.find("td.Payout").first().html() ?? "";
+  const payoutTexts = payoutHtml
+    .split(/<br\s*\/?>/i)
+    .map((chunk) =>
+      chunk
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, "")
+        .trim()
+        .replace(/円$/, "")
+        .replace(/,/g, ""),
+    )
+    .filter((text) => text.length > 0);
+
+  const ninkiTexts = $row
+    .find("td.Ninki span")
+    .toArray()
+    .map((span) => $(span).text().trim().replace(/人気$/, ""))
+    .filter((text) => text.length > 0);
+
+  return combos
+    .map((combination, i) => {
+      const payoutYen = Number(payoutTexts[i]);
+      if (!combination || !Number.isFinite(payoutYen)) return null;
+      const popularity = Number(ninkiTexts[i]);
+      return {
+        betType,
+        combination,
+        payoutYen,
+        popularity: Number.isFinite(popularity) ? popularity : null,
+      };
+    })
+    .filter((p): p is ParsedPayout => p !== null);
+}
+
+export function parsePayoutsHtml(html: string): ParsedPayout[] {
+  const $ = cheerio.load(html);
+  const rows = $("table.Payout_Detail_Table tbody tr").toArray();
+  return rows.flatMap((row) => parsePayoutRow($, row));
 }
