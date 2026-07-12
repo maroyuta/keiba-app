@@ -51,6 +51,10 @@ scripts/jvlink/logs/
 # scripts配下の他のPythonバッチ (compute_recommendation_results.py等) 共通
 scripts/__pycache__/
 
+# Windowsタスクスケジューラ用のラッパー(個人PC固有の絶対パスを含むため機体ごとに作成する)
+scripts/netkeiba/run_sync_recent_task.bat
+scripts/netkeiba/logs/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

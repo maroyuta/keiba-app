@@ -53,12 +53,49 @@ npm run sync:netkeiba:recent -- [--days N]
 (`scripts/jvlink/load_to_supabase.py`の`--env-file`と同じ設計)。Mac側でクリーンな環境
 (`env -i`)から実行して動作確認済み。
 
-## Windows PCでのスケジュール化 (未実施)
+## Windows PCでのスケジュール化 (✅完了・実機動作確認済み、2026-07-12)
 
-このリポジトリの外側の作業。JV-Linkの定期実行と同じマシン上で、タスクスケジューラから
-`npm run sync:netkeiba:recent`(引数なしで直近7日分)を叩く形を想定している。
-`run_weekly_sync.py`(月曜6:00)・`ComputeRecommendationResults`(月曜7:00)と同じ並びで、
-月曜8:00あたりに登録するのがよさそう(その週の開催が確定した後に実行したいため)。
+JV-Linkの定期実行と同じマシン上で、タスクスケジューラから`sync:netkeiba:recent`(引数なしで
+直近7日分)を`run_weekly_sync.py`(月曜6:00)・`ComputeRecommendationResults`(月曜7:00)の
+後、月曜8:00に実行するよう登録済み。
+
+**前提: このWindows PCにはNode.jsが入っていなかったため、`winget install --id OpenJS.NodeJS.LTS`
+(LTS、確認時点でv24.18.0)で導入した。** `npm install`でこのリポジトリの依存関係も導入済み。
+
+`npm run sync:netkeiba:recent`はタスクスケジューラの`/tr`から直接叩きにくい(npm経由の
+複雑な引用符ネストが崩れやすい)ため、`scripts/netkeiba/run_sync_recent_task.bat`
+(個人PC固有の絶対パスを含むため`.gitignore`対象、機体ごとに作成する想定)を用意し、
+これがcwdを固定した上で`node.exe`から`node_modules\tsx\dist\cli.mjs`を直接叩く形にしている:
+```bat
+@echo off
+setlocal
+set "LOGDIR=%~dp0logs"
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+set "LOGFILE=%LOGDIR%\sync_recent_last.log"
+call :main > "%LOGFILE%" 2>&1
+exit /b %ERRORLEVEL%
+
+:main
+cd /d "%~dp0..\.."
+"C:\Path\To\nodejs\node.exe" "node_modules\tsx\dist\cli.mjs" "scripts\netkeiba\syncRecentRaces.ts" --env-file "scripts\jvlink\.env.jvlink"
+```
+登録:
+```
+schtasks /create /tn "SyncNetkeibaRecent" /sc weekly /d MON /st 08:00 /f ^
+  /tr "C:\Path\To\keiba-app\scripts\netkeiba\run_sync_recent_task.bat"
+```
+
+**⚠️ハマった点:** 最初`cd /d`の対象をバッチファイル内に日本語を含む絶対パスとして直接
+書いていたところ、対話的なPowerShellから叩けば動くのにタスクスケジューラ経由(非対話実行)
+だと`cd`自体が失敗し、バッチファイルが`exit code 9`や`1`で即座に落ちる現象が発生した
+(非対話cmd.exeのコードページ起因と推測、原因の完全な特定はできていない)。
+`%~dp0`(バッチファイル自身のパスをOSから動的に取得する変数)を使う形に書き換えたところ解消した。
+このバグの調査中に気づいたが、**Task SchedulerからのバッチはデフォルトでNode.jsの標準出力を
+どこにも残さない**ため、上記の通り`> ログファイル 2>&1`でのリダイレクトが実質必須。
+
+**✅実機で`schtasks /run`によりトリガーし、動作確認済み:** 直近7日・70レース分・
+929件のpast_performancesを実際にupsertし、`schtasks /query`の`Last Result=0`
+(所要時間: 開始17:35:08〜終了17:40:57、約5分49秒)で完了することを確認した。
 
 ## 既知の制約・未検証事項
 
