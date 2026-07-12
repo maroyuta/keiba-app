@@ -52,6 +52,18 @@ BABA_NAMES = {"1": "良", "2": "稍重", "3": "重", "4": "不良"}
 # JV-Dataグレードコード (RA.grade_cd)。A/B/Cのみ確度が高い。他は未対応。
 GRADE_NAMES = {"A": "G1", "B": "G2", "C": "G3"}
 
+# JV-Data競走条件コード (RA.jyoken_cd1〜5)。公式コード表(JV-Data2311.xls「コード表」シート
+# 2007.競走条件コード)より抜粋、701/702/703/999は同シートを実際に開いて確認済み(2026-07-13)。
+# 001〜100は収得賞金の上限(万円単位、コード×100万円)を表す純粋な金額区分で、JRAが今どの金額帯を
+# 「1勝クラス」等と呼んでいるかは毎年見直されるためJV-Dataのコード自体には含まれない。ここでは
+# 金額区分をそのまま表示する(「1勝クラス」等の呼称までは変換しない)。
+JYOKEN_CD_SPECIAL_NAMES = {
+    "701": "新馬",
+    "702": "未出走",
+    "703": "未勝利",
+    "999": "オープン",
+}
+
 # HR_parsed.csvの賭式ごとの列プレフィックス -> (race_payouts.bet_type, 件数, 馬番の桁数, 組み合わせの頭数)
 # 件数・桁数はparse_records.pyのparse_hr()(JV_HR_PAY構造体準拠)と対応させている。
 PAYOUT_GROUPS = {
@@ -134,6 +146,28 @@ def to_float_scaled(value: str, scale: float) -> "float | None":
         return None
 
 
+def guess_race_class(row: dict) -> "str | None":
+    """jyoken_cd1〜5からrace_classを組み立てる。
+
+    jyoken_name(自由文字列)は条件戦では空のことが多く判明した(2026-07-13、実データで確認)。
+    JV-Dataは条件を自由文字列ではなくコードで持っており、jyoken_cd1〜4がそれぞれ
+    2歳条件/3歳条件/4歳条件/5歳以上条件、jyoken_cd5が「最若年条件」(実質的にそのレースの
+    主条件)を表す。通常のレースはjyoken_cd5に意味のある値が入るため、まずそちらを見て、
+    無ければ1〜4を順に見る(フォーマット仕様書「フォーマット」シートで各スロットの意味を確認済み)。
+    """
+    for key in ("jyoken_cd5", "jyoken_cd1", "jyoken_cd2", "jyoken_cd3", "jyoken_cd4"):
+        code = (row.get(key) or "").strip()
+        if not code or code == "000":
+            continue
+        if code in JYOKEN_CD_SPECIAL_NAMES:
+            return JYOKEN_CD_SPECIAL_NAMES[code]
+        try:
+            return f"収得賞金{int(code) * 100}万円以下"
+        except ValueError:
+            continue
+    return None
+
+
 def build_jv_race_key(row: dict) -> str:
     return (
         f"{row['race_year']}{row['race_jyo_cd']}{row['race_kaiji']}"
@@ -155,7 +189,7 @@ def build_race_payload(row: dict) -> dict:
         "race_number": to_int(row["race_race_num"]),
         "race_date": f"{row['race_year']}-{race_month_day[:2]}-{race_month_day[2:]}",
         "race_name": race_name or None,
-        "race_class": row.get("jyoken_name") or None,
+        "race_class": row.get("jyoken_name") or guess_race_class(row),
         "track_type": guess_track_type(row.get("track_cd", "")),
         "distance_m": to_int(row.get("kyori", "")),
         "weather": WEATHER_NAMES.get(row.get("tenko_cd", "")),
