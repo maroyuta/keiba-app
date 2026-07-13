@@ -83,9 +83,11 @@ export async function syncPayouts(raceIds: string[]): Promise<PayoutSyncSummary[
       continue;
     }
 
-    // race_entries.odds_win/actual_popularityが未確定(0)のままのことがあるため、
-    // 同じ結果ページから確定済みの単勝オッズ・人気で埋める(horse_numberで突き合わせ)。
-    // 既に正しい値が入っている行を誤って壊さないよう、oddsWin/popularityが取れた馬だけ更新する。
+    // race_entries.odds_win/actual_popularity/finish_position/finish_time_secが未確定(0)のまま
+    // のことがあるため、同じ結果ページから確定済みの値で埋める(horse_numberで突き合わせ)。
+    // 2026-07-13、当初odds_win/actual_popularityのみ更新していたが、07-11分はfinish_positionも
+    // 0のままだったと判明したため追加した(バックテストのROI判定自体はrace_payoutsとの照合のため
+    // 影響なかったが、着順の表示・分析ができていなかった)。
     let entriesUpdated = 0;
     const parsedResult = parseRaceResultHtml(html, raceId);
     if (parsedResult) {
@@ -93,7 +95,12 @@ export async function syncPayouts(raceIds: string[]): Promise<PayoutSyncSummary[
         if (horse.horseNumber === null || horse.oddsWin === null) continue;
         const { error: entryUpdateError } = await supabase
           .from("race_entries")
-          .update({ odds_win: horse.oddsWin, actual_popularity: horse.popularity })
+          .update({
+            odds_win: horse.oddsWin,
+            actual_popularity: horse.popularity,
+            finish_position: horse.finishPosition,
+            finish_time_sec: horse.finishTimeSec,
+          })
           .eq("race_id", race.id)
           .eq("horse_number", horse.horseNumber);
         if (entryUpdateError) {
