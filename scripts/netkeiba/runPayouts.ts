@@ -42,12 +42,18 @@ async function main() {
 
   console.log("\n=== 同期結果 ===");
   let totalUpserted = 0;
+  let totalEntriesUpdated = 0;
   for (const summary of summaries) {
     totalUpserted += summary.upserted;
-    console.log(`${summary.raceId}: ${summary.status} (upserted=${summary.upserted})`);
+    totalEntriesUpdated += summary.entriesUpdated;
+    console.log(
+      `${summary.raceId}: ${summary.status} (upserted=${summary.upserted}, entriesUpdated=${summary.entriesUpdated})`,
+    );
   }
   const failed = summaries.filter((s) => s.status !== "ok");
-  console.log(`\n合計upserted=${totalUpserted}件、失敗=${failed.length}件`);
+  console.log(
+    `\n合計upserted=${totalUpserted}件、race_entries更新=${totalEntriesUpdated}件、失敗=${failed.length}件`,
+  );
 }
 
 main().catch((err) => {
