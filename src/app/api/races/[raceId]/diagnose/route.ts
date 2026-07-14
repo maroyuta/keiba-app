@@ -18,6 +18,72 @@ const PAST_PERFORMANCE_LIMIT = 5;
 // 調教評価は絶対タイムでなく直近セッションとの相対比較が目的のため、直近3回分で十分。
 const TRAINING_SESSION_LIMIT = 3;
 
+// 馬券方針「馬券対象は基本1〜9番人気に限定」はこれまでプロンプト上の指示のみで、コード側の
+// enforcementが一切無かった(2026-07-14発覚)。バックテストで相手(aite)に実質16番人気
+// (単勝オッズ81.7倍)の馬を選んでしまう事故があり、LLMの自己申告だけに委ねるのはリスクが高いと
+// 判明したため、書き込み直前にコード側で機械的に検証するガードを追加する。
+const MAX_BET_POPULARITY = 9;
+
+// expected_popularity(レース前オッズ由来、当日随時更新の速報値)が無いデータ(過去のバックテスト対象
+// レース等)でも検証できるよう、odds_win昇順の順位をフォールバックとして常に併用する。
+function buildOddsRankMap(input: RaceDiagnosisInput): Map<number, number> {
+  const withOdds = input.entries
+    .map((e) => ({ horseNumber: e.entry.horse_number, oddsWin: e.entry.odds_win }))
+    .filter((e): e is { horseNumber: number; oddsWin: number } => e.oddsWin !== null)
+    .sort((a, b) => a.oddsWin - b.oddsWin);
+  const rankMap = new Map<number, number>();
+  withOdds.forEach((e, i) => rankMap.set(e.horseNumber, i + 1));
+  return rankMap;
+}
+
+function resolvePopularity(
+  horseNumber: number,
+  input: RaceDiagnosisInput,
+  oddsRankMap: Map<number, number>,
+): number | null {
+  const entry = input.entries.find((e) => e.entry.horse_number === horseNumber);
+  return entry?.entry.expected_popularity ?? oddsRankMap.get(horseNumber) ?? null;
+}
+
+// 買い目(honmei/aite)を実際にDBへ書き込む直前の最終安全装置。LLMの出力を無条件に信用せず、
+// 人気(無ければオッズ順位)が想定範囲(1〜9番人気)を超えている、またはそもそも検証に必要な
+// オッズデータが無い場合は、購入自体を機械的に見送りへ差し戻す。
+function enforcePopularityGuard(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  if (result.honmei_horse_number === null || result.aite_horse_number === null) {
+    return result;
+  }
+  const oddsRankMap = buildOddsRankMap(input);
+  const honmeiPop = resolvePopularity(result.honmei_horse_number, input, oddsRankMap);
+  const aitePop = resolvePopularity(result.aite_horse_number, input, oddsRankMap);
+
+  const violations: string[] = [];
+  if (honmeiPop === null || honmeiPop > MAX_BET_POPULARITY) {
+    violations.push(`本命${result.honmei_horse_number}番(推定${honmeiPop ?? "不明"}人気)`);
+  }
+  if (aitePop === null || aitePop > MAX_BET_POPULARITY) {
+    violations.push(`相手${result.aite_horse_number}番(推定${aitePop ?? "不明"}人気)`);
+  }
+  if (violations.length === 0) {
+    return result;
+  }
+
+  console.warn(
+    `[popularity-guard] race honmei/aiteが想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)外のため購入を見送りに変更: ${violations.join(", ")}`,
+  );
+  return {
+    ...result,
+    honmei_horse_number: null,
+    aite_horse_number: null,
+    bet_type: null,
+    bet_amount_wide: null,
+    bet_amount_umaren: null,
+    race_rank_reason: `${result.race_rank_reason}\n[自動チェック] ${violations.join("、")}が想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)を超えていたため、購入を機械的に見送りへ変更した。`,
+  };
+}
+
 // トラックバイアスはその時の馬場状態次第のため、直近の実データを根拠にする。
 // - 日曜のレース: [今週土曜の同場, 先週の同場] の最大2件を参照 (2026-07-13、ユーザー指摘により
 //   土曜だけでなく先週分も追加。片方だけしか見つからない場合はあるものだけ返す)
@@ -26,7 +92,7 @@ const TRAINING_SESSION_LIMIT = 3;
 async function findBiasReferenceRaces(
   supabase: SupabaseAdminClient,
   race: RaceRow,
-): Promise<Array<{ id: string; reference: BiasReferenceRace }>> {
+): Promise<Array<{ id?: string; reference: BiasReferenceRace }>> {
   const raceDate = new Date(`${race.race_date}T00:00:00Z`);
   const dayOfWeek = raceDate.getUTCDay(); // 0=日, 6=土
 
@@ -68,7 +134,7 @@ async function findBiasReferenceRaces(
     };
   }
 
-  const results: Array<{ id: string; reference: BiasReferenceRace }> = [];
+  const results: Array<{ id?: string; reference: BiasReferenceRace }> = [];
 
   if (dayOfWeek === 0) {
     const saturday = new Date(raceDate);
@@ -87,7 +153,98 @@ async function findBiasReferenceRaces(
     if (data) results.push(toResult(data));
   }
 
+  // 開催初週等で当シーズンの参照レース(AIがbias_noteを書いた実績)が1件も無い場合、
+  // 過去の確定済みレース(race_entries.post_position/finish_position、複数年分あれば年をまたいでも可)
+  // から機械的に「内枠/外枠どちらが残りやすいか」を集計し、非LLMのフォールバック根拠として補う。
+  // LLMによる文章化コストが発生しないため無料。あくまで枠(post_position)の偏りのみを見る簡易指標で、
+  // 脚質(コーナー通過順位)までは含まない点に注意(past_performancesの自己参照backfillが揃った後の課題)。
+  if (results.length === 0) {
+    const historical = await computeHistoricalBiasSignal(supabase, race);
+    if (historical) {
+      results.push({
+        reference: {
+          raceDate: `統計(過去${historical.sampleSize}走・複数レース集計、単一レースの実況ではない)`,
+          trackCondition: null,
+          biasNote: historical.summary,
+        },
+      });
+    }
+  }
+
   return results;
+}
+
+// 枠(post_position)と着順(finish_position)の相関から、内枠/外枠どちらが残りやすいかを
+// 機械的に集計する。当シーズンの直近参照レースが無い(開催初週等)場合のみのフォールバック。
+async function computeHistoricalBiasSignal(
+  supabase: SupabaseAdminClient,
+  race: RaceRow,
+): Promise<{ sampleSize: number; summary: string } | null> {
+  const { data: pastRaces } = await supabase
+    .from("races")
+    .select("id, entry_count")
+    .eq("keibajo_code", race.keibajo_code)
+    .eq("track_type", race.track_type)
+    .neq("id", race.id)
+    .lt("race_date", race.race_date)
+    .not("entry_count", "is", null)
+    .order("race_date", { ascending: false })
+    .limit(40);
+
+  const entryCountByRace = new Map((pastRaces ?? []).map((r) => [r.id, r.entry_count as number]));
+  const raceIds = [...entryCountByRace.keys()];
+  if (raceIds.length === 0) return null;
+
+  const { data: entries } = await supabase
+    .from("race_entries")
+    .select("race_id, post_position, finish_position")
+    .in("race_id", raceIds)
+    .not("post_position", "is", null)
+    .not("finish_position", "is", null)
+    .gt("finish_position", 0);
+
+  const innerFinishPcts: number[] = [];
+  const outerFinishPcts: number[] = [];
+  for (const e of entries ?? []) {
+    const entryCount = entryCountByRace.get(e.race_id);
+    if (!entryCount || !e.post_position || !e.finish_position) continue;
+    const finishPct = e.finish_position / entryCount;
+    const half = Math.ceil(entryCount / 2);
+    if (e.post_position <= half) {
+      innerFinishPcts.push(finishPct);
+    } else {
+      outerFinishPcts.push(finishPct);
+    }
+  }
+
+  const sampleSize = innerFinishPcts.length + outerFinishPcts.length;
+  // n不足時のノイズを避けるため、内外それぞれ最低20件は欲しい
+  if (innerFinishPcts.length < 20 || outerFinishPcts.length < 20) return null;
+
+  const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const innerAvg = avg(innerFinishPcts);
+  const outerAvg = avg(outerFinishPcts);
+  const diff = outerAvg - innerAvg; // 正なら内枠有利(外枠の方が着順ペースが悪い)
+
+  let trend: string;
+  if (diff > 0.05) {
+    trend = "内枠がやや有利な傾向";
+  } else if (diff < -0.05) {
+    trend = "外枠がやや有利な傾向";
+  } else {
+    trend = "枠による明確な差は見られない";
+  }
+
+  const innerPct = Math.round(innerAvg * 100);
+  const outerPct = Math.round(outerAvg * 100);
+  return {
+    sampleSize,
+    summary:
+      `当シーズンの参照レースが無いため、過去${sampleSize}走(同場・同馬場種別、単年〜複数年の` +
+      `確定済みレースの機械集計、AIによる文章化は経ていない生の統計値)から算出した枠順傾向: ` +
+      `内枠(前半分の枠)の平均着順(頭数比)が${innerPct}%、外枠が${outerPct}%で、${trend}。` +
+      `脚質(先行/差し)の傾向はこの集計に含まれないため、コース形態からの一般論と併用して判断すること。`,
+  };
 }
 
 async function loadRaceDiagnosisInput(
@@ -252,9 +409,10 @@ async function persistDiagnosis(
   supabase: SupabaseAdminClient,
   raceId: string,
   input: RaceDiagnosisInput,
-  result: DiagnosisResult,
+  rawResult: DiagnosisResult,
   biasReferenceRaceId: string | null,
 ): Promise<void> {
+  const result = enforcePopularityGuard(input, rawResult);
   await supabase
     .from("races")
     .update({

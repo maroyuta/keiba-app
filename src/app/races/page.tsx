@@ -46,6 +46,114 @@ async function findAdjacentDate(
   return data?.[0]?.race_date ?? null;
 }
 
+function groupByVenue(rows: Race[]): Race[][] {
+  const venueGroups = new Map<string, Race[]>();
+  for (const race of rows) {
+    const key = race.keibajo_code;
+    if (!venueGroups.has(key)) venueGroups.set(key, []);
+    venueGroups.get(key)!.push(race);
+  }
+  return [...venueGroups.values()];
+}
+
+// レースを開催場(x軸)×レース番号1-12(y軸)のグリッドで俯瞰する。
+// screening(Haiku)でC評価になったレースは鼠色で弾かれたことが一目で分かるようにする。
+const CELL_STYLES: Record<string, string> = {
+  S: "border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20",
+  A: "border-teal-500/50 bg-teal-500/10 hover:bg-teal-500/20",
+  B: "border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20",
+  C: "border-zinc-700/60 bg-zinc-800/40 opacity-60 hover:opacity-80",
+  none: "border-zinc-800 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-emerald-500/5",
+};
+
+function RaceCell({ race }: { race: Race | undefined }) {
+  if (!race) {
+    return <div className="h-16 rounded-lg border border-dashed border-zinc-800/60" />;
+  }
+  const styleKey = race.race_rank ?? "none";
+  return (
+    <Link
+      href={`/races/${race.id}`}
+      className={`flex h-16 flex-col justify-between overflow-hidden rounded-lg border px-1.5 py-1 transition-colors ${
+        CELL_STYLES[styleKey] ?? CELL_STYLES.none
+      }`}
+    >
+      <div className="flex items-center justify-between gap-1">
+        {race.grade ? (
+          <span className="shrink-0 rounded bg-amber-400/20 px-1 text-[9px] font-bold text-amber-400">
+            {race.grade}
+          </span>
+        ) : (
+          <span />
+        )}
+        <RankBadge rank={race.race_rank as RaceRank | null} />
+      </div>
+      <span className="truncate text-[11px] leading-tight font-medium text-zinc-100">
+        {race.race_name || race.race_class || "—"}
+      </span>
+      <span className="truncate text-[10px] leading-tight text-zinc-500">
+        {formatPostTime(race.post_time)} {race.entry_count ? `${race.entry_count}頭` : ""}
+      </span>
+    </Link>
+  );
+}
+
+function DateGrid({ dateRows }: { dateRows: Race[] }) {
+  const venueGroupsList = groupByVenue(dateRows);
+  const maxRaceNumber = Math.max(12, ...dateRows.map((r) => r.race_number));
+  const raceNumbers = Array.from({ length: maxRaceNumber }, (_, i) => i + 1);
+
+  return (
+    <div className="overflow-x-auto">
+      <div
+        className="grid min-w-max gap-1.5"
+        style={{ gridTemplateColumns: `2.5rem repeat(${venueGroupsList.length}, 9rem)` }}
+      >
+        <div />
+        {venueGroupsList.map((venueRaces) => {
+          const first = venueRaces[0];
+          return (
+            <div key={first.keibajo_code} className="px-1 pb-1 text-center">
+              <div className="text-xs font-bold text-white">{first.keibajo_name}</div>
+              <div className="text-[10px] text-zinc-500">
+                {first.track_condition ? `馬場:${first.track_condition}` : ""}
+              </div>
+            </div>
+          );
+        })}
+
+        {raceNumbers.map((num) => (
+          <div key={num} className="contents">
+            <div className="flex items-center justify-center text-xs font-bold text-zinc-500">
+              {num}R
+            </div>
+            {venueGroupsList.map((venueRaces) => (
+              <RaceCell
+                key={`${venueRaces[0].keibajo_code}-${num}`}
+                race={venueRaces.find((r) => r.race_number === num)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-zinc-500">
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400" />S
+        </span>
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-teal-500" />A
+        </span>
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-500" />B
+        </span>
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-zinc-600" />C(screening除外)
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default async function RacesPage({
   searchParams,
 }: {
@@ -54,16 +162,91 @@ export default async function RacesPage({
   const { date } = await searchParams;
   const supabase = createAdminClient();
 
-  let targetDate = date ?? null;
-  if (!targetDate) {
-    const { data: latest } = await supabase
+  // dateが明示されていない場合は「今週まとめて見る」ビュー: 今日以降に登録されている
+  // 全開催日を1ページにまとめて表示する(週末2日分をいちいち日付切り替えせず俯瞰したいという要望)。
+  // dateが指定された場合は従来通り単日ドリルダウン(過去日の閲覧・前日/次日ナビゲーション用)。
+  if (!date) {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: upcoming } = await supabase
       .from("races")
-      .select("race_date")
-      .order("race_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    targetDate = latest?.race_date ?? new Date().toISOString().slice(0, 10);
+      .select(
+        "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank",
+      )
+      .gte("race_date", today)
+      .order("race_date", { ascending: true })
+      .order("keibajo_code", { ascending: true })
+      .order("race_number", { ascending: true });
+
+    let rows = (upcoming ?? []) as Race[];
+    let usingFallback = false;
+
+    // 今日以降のレースが1件も無い場合(開催と開催の谷間等)は、直近の過去開催を表示する
+    if (rows.length === 0) {
+      const { data: latest } = await supabase
+        .from("races")
+        .select("race_date")
+        .order("race_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latest?.race_date) {
+        const { data: fallback } = await supabase
+          .from("races")
+          .select(
+            "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank",
+          )
+          .eq("race_date", latest.race_date)
+          .order("keibajo_code", { ascending: true })
+          .order("race_number", { ascending: true });
+        rows = (fallback ?? []) as Race[];
+        usingFallback = true;
+      }
+    }
+
+    const dateGroups = new Map<string, Race[]>();
+    for (const race of rows) {
+      if (!dateGroups.has(race.race_date)) dateGroups.set(race.race_date, []);
+      dateGroups.get(race.race_date)!.push(race);
+    }
+
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6">
+          <div className="flex items-center justify-between gap-2">
+            <h1 className="text-xl font-bold text-white">
+              {usingFallback ? "直近のレース" : "今週のレース"}
+            </h1>
+            <span className="text-xs text-zinc-500">単日ごとに見る場合は各日付見出しをタップ</span>
+          </div>
+
+          {dateGroups.size === 0 ? (
+            <p className="text-sm text-zinc-500">登録されているレースがありません。</p>
+          ) : (
+            [...dateGroups.entries()].map(([raceDate, dateRows]) => {
+              const dateLabel = new Date(`${raceDate}T00:00:00Z`).toLocaleDateString("ja-JP", {
+                month: "long",
+                day: "numeric",
+                weekday: "short",
+                timeZone: "UTC",
+              });
+              return (
+                <div key={raceDate} className="flex flex-col gap-3">
+                  <Link
+                    href={`/races?date=${raceDate}`}
+                    className="inline-flex w-fit items-center gap-1.5 border-b border-emerald-500/30 pb-1 text-sm font-semibold text-emerald-400 transition-colors hover:text-emerald-300"
+                  >
+                    {dateLabel}
+                  </Link>
+                  <DateGrid dateRows={dateRows} />
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
   }
+
+  const targetDate = date;
 
   const { data: races } = await supabase
     .from("races")
@@ -75,13 +258,6 @@ export default async function RacesPage({
     .order("race_number", { ascending: true });
 
   const rows = (races ?? []) as Race[];
-
-  const venueGroups = new Map<string, Race[]>();
-  for (const race of rows) {
-    const key = race.keibajo_code;
-    if (!venueGroups.has(key)) venueGroups.set(key, []);
-    venueGroups.get(key)!.push(race);
-  }
 
   const [prevDate, nextDate] = await Promise.all([
     findAdjacentDate(supabase, targetDate, "prev"),
@@ -98,7 +274,12 @@ export default async function RacesPage({
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
-        <h1 className="text-xl font-bold text-white">レース一覧</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-xl font-bold text-white">レース一覧</h1>
+          <Link href="/races" className="text-xs text-emerald-400/80 hover:text-emerald-300">
+            ← 今週まとめて見る
+          </Link>
+        </div>
 
         <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
           {prevDate ? (
@@ -124,63 +305,10 @@ export default async function RacesPage({
           )}
         </div>
 
-        {venueGroups.size === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-sm text-zinc-500">この日のレースは登録されていません。</p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {[...venueGroups.values()].map((venueRaces) => {
-              const first = venueRaces[0];
-              return (
-                <section
-                  key={first.keibajo_code}
-                  className="flex flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40"
-                >
-                  <header className="flex flex-col gap-0.5 border-b border-zinc-800 bg-zinc-900/80 px-3 py-2.5">
-                    <span className="text-sm font-bold text-white">
-                      {first.kaiji}回{first.keibajo_name}
-                      {first.nichiji}日目
-                    </span>
-                    <span className="text-xs text-zinc-500">
-                      {first.weather && `天候:${first.weather}`}
-                      {first.track_condition && ` ・ 馬場:${first.track_condition}`}
-                    </span>
-                  </header>
-                  <ul className="flex flex-col divide-y divide-zinc-800/80">
-                    {venueRaces.map((race) => (
-                      <li key={race.id}>
-                        <Link
-                          href={`/races/${race.id}`}
-                          className="flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-emerald-500/5"
-                        >
-                          <span className="w-7 shrink-0 text-center text-xs font-bold text-zinc-500">
-                            {race.race_number}R
-                          </span>
-                          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                            <span className="flex items-center gap-1.5 truncate text-sm font-medium text-zinc-100">
-                              {race.grade && (
-                                <span className="shrink-0 rounded bg-amber-400/15 px-1 text-[10px] font-bold text-amber-400">
-                                  {race.grade}
-                                </span>
-                              )}
-                              <span className="truncate">
-                                {race.race_name || race.race_class || "—"}
-                              </span>
-                            </span>
-                            <span className="text-xs text-emerald-400/80">
-                              {formatPostTime(race.post_time)} ・ {race.track_type}
-                              {race.distance_m}m
-                              {race.entry_count ? ` ・ ${race.entry_count}頭` : ""}
-                            </span>
-                          </div>
-                          <RankBadge rank={race.race_rank as RaceRank | null} />
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              );
-            })}
-          </div>
+          <DateGrid dateRows={rows} />
         )}
       </div>
     </div>
