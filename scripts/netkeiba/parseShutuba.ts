@@ -6,8 +6,11 @@ import type { Sex, TrackType } from "@/lib/supabase/database.types";
 // 元にしたパーサー。result.htmlと違い「レース前」のページのため、枠番・馬番・斤量・馬体重は
 // 枠順確定(ユーザーの実感では金・土、レースにより前後する)が終わるまで空欄になる(実データで確認済み)。空欄の場合は
 // null を返すので、呼び出し側は「抽選待ち」として扱い、race_entriesへの書き込みを見送ること。
-// 天候・馬場状態・オッズもこのページには載らない(オッズはJV-Link側のfetch_odds.py担当、
-// AGENTS.md参照)。
+// 天候・馬場状態はこのページには載らない。
+// **オッズ・人気は各馬の行に`<span id="odds-1_N">`/`<span id="ninki-1_N">`として構造自体は
+// 常に存在するが、発売開始前は"---.-"/"**"のプレースホルダーのままで、発売開始後(実感では
+// 枠順確定と近いタイミング)に実際の数値へ置き換わる(2026-07-14、実HTML確認済み)。
+// このため単発の枠順取得と違い、オッズは同じraceIdに対して繰り返し取得し直す運用を想定する。
 
 const VENUE_NAMES: Record<string, string> = {
   "01": "札幌",
@@ -50,6 +53,8 @@ export interface ParsedShutubaHorse {
   trainerAffiliation: string | null; // "美浦" | "栗東"
   horseWeightKg: number | null;
   horseWeightDiffKg: number | null;
+  oddsWin: number | null; // 単勝オッズ。発売開始前はnull
+  popularity: number | null; // 人気順位。発売開始前はnull
 }
 
 export interface ParsedShutuba {
@@ -152,6 +157,13 @@ function parseHorseRow($: cheerio.CheerioAPI, row: Element): ParsedShutubaHorse 
 
   const { weightKg, diffKg } = parseWeight($row.find("td.Weight").text());
 
+  // オッズ・人気は`id="odds-1_<馬番>"`/`id="ninki-1_<馬番>"`のspanで持つ。発売開始前は
+  // "---.-"/"**"のプレースホルダーなので、数値化できない場合はnullとして扱う。
+  const oddsText = $row.find('span[id^="odds-"]').first().text().trim();
+  const popularityText = $row.find('span[id^="ninki-"]').first().text().trim();
+  const oddsWin = /^\d+(\.\d+)?$/.test(oddsText) ? Number(oddsText) : null;
+  const popularity = /^\d+$/.test(popularityText) ? Number(popularityText) : null;
+
   return {
     netkeibaHorseId: horseIdMatch[1],
     horseName: $row.find(".HorseName").first().text().trim(),
@@ -170,6 +182,8 @@ function parseHorseRow($: cheerio.CheerioAPI, row: Element): ParsedShutubaHorse 
     trainerAffiliation: $row.find("td.Trainer .Label2").first().text().trim() || null,
     horseWeightKg: weightKg,
     horseWeightDiffKg: diffKg,
+    oddsWin,
+    popularity,
   };
 }
 

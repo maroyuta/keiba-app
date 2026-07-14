@@ -22,6 +22,7 @@ export interface ShutubaSyncSummary {
   horsesUpserted: number;
   entriesInserted: number;
   entriesSkippedNotDrawn: number;
+  oddsUpdated: number;
 }
 
 // 新馬・未勝利は既存の診断ロジック(src/app/api/races/[raceId]/diagnose/route.ts)が
@@ -161,6 +162,40 @@ async function insertMissingEntries(
   return { inserted, skippedNotDrawn };
 }
 
+// race_entries.odds_win/expected_popularityを更新する。insertMissingEntriesと違い、
+// 既に存在する行も対象(オッズは発売開始後レース直前まで変動し続けるため、何度でも
+// 上書きして最新化したい)。プレースホルダー("---.-"等)由来のnullは書き込まない
+// (parseShutubaHtml側で既にnull化済み。取得できた時だけ更新し、既存値を消さない)。
+async function updateOdds(
+  supabase: ReturnType<typeof createNetkeibaSyncClient>,
+  raceInternalId: string,
+  horses: ParsedShutuba["horses"],
+): Promise<number> {
+  const withOdds = horses.filter(
+    (h): h is typeof h & { horseNumber: number; oddsWin: number } =>
+      h.horseNumber !== null && h.oddsWin !== null,
+  );
+  if (withOdds.length === 0) return 0;
+
+  let updated = 0;
+  for (const horse of withOdds) {
+    const { error } = await supabase
+      .from("race_entries")
+      .update({ odds_win: horse.oddsWin, expected_popularity: horse.popularity })
+      .eq("race_id", raceInternalId)
+      .eq("horse_number", horse.horseNumber);
+    if (error) {
+      console.warn(
+        `[netkeiba] オッズ更新失敗 race_id=${raceInternalId} horse_number=${horse.horseNumber}:`,
+        error.message,
+      );
+      continue;
+    }
+    updated += 1;
+  }
+  return updated;
+}
+
 export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary[]> {
   const supabase = createNetkeibaSyncClient();
   const summaries: ShutubaSyncSummary[] = [];
@@ -177,6 +212,7 @@ export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary
         horsesUpserted: 0,
         entriesInserted: 0,
         entriesSkippedNotDrawn: 0,
+        oddsUpdated: 0,
       });
       continue;
     }
@@ -196,6 +232,7 @@ export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary
         horsesUpserted: 0,
         entriesInserted: 0,
         entriesSkippedNotDrawn: 0,
+        oddsUpdated: 0,
       });
       continue;
     }
@@ -207,6 +244,7 @@ export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary
         horsesUpserted: 0,
         entriesInserted: 0,
         entriesSkippedNotDrawn: 0,
+        oddsUpdated: 0,
       });
       continue;
     }
@@ -221,6 +259,7 @@ export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary
         parsed.horses,
         horseIdByJvId,
       );
+      const oddsUpdated = await updateOdds(supabase, raceInternalId, parsed.horses);
       summaries.push({
         raceId,
         status: "ok",
@@ -228,6 +267,7 @@ export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary
         horsesUpserted: horseIdByJvId.size,
         entriesInserted: inserted,
         entriesSkippedNotDrawn: skippedNotDrawn,
+        oddsUpdated,
       });
     } catch (err) {
       console.warn(`[netkeiba] DB書き込み失敗 race_id=${raceId}:`, err);
@@ -238,6 +278,7 @@ export async function syncShutuba(raceIds: string[]): Promise<ShutubaSyncSummary
         horsesUpserted: 0,
         entriesInserted: 0,
         entriesSkippedNotDrawn: 0,
+        oddsUpdated: 0,
       });
     }
   }

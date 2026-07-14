@@ -38,19 +38,22 @@ async function main() {
   console.log("\n=== 同期結果 ===");
   let racesCreated = 0;
   let entriesInserted = 0;
+  let oddsUpdated = 0;
   for (const s of summaries) {
     if (s.raceCreated) racesCreated += 1;
     entriesInserted += s.entriesInserted;
+    oddsUpdated += s.oddsUpdated;
     console.log(
       `${s.raceId}: ${s.status} (raceCreated=${s.raceCreated}, horses=${s.horsesUpserted}, ` +
-        `entriesInserted=${s.entriesInserted}, 抽選待ち=${s.entriesSkippedNotDrawn})`,
+        `entriesInserted=${s.entriesInserted}, 抽選待ち=${s.entriesSkippedNotDrawn}, ` +
+        `oddsUpdated=${s.oddsUpdated})`,
     );
   }
   const excluded = summaries.filter((s) => s.status === "skipped_excluded_class");
   const failed = summaries.filter((s) => s.status !== "ok" && s.status !== "skipped_excluded_class");
   console.log(
     `\nraces新規作成=${racesCreated}件、race_entries作成=${entriesInserted}件、` +
-      `新馬/未勝利で除外=${excluded.length}件、失敗=${failed.length}件`,
+      `オッズ更新=${oddsUpdated}件、新馬/未勝利で除外=${excluded.length}件、失敗=${failed.length}件`,
   );
 }
 
