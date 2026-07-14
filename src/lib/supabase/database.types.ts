@@ -69,60 +69,6 @@ export type Database = {
           },
         ]
       }
-      horses: {
-        Row: {
-          birth_date: string | null
-          breeder_name: string | null
-          coat_color: string | null
-          created_at: string
-          dam_name: string | null
-          dam_sire_name: string | null
-          horse_name: string
-          id: string
-          jv_horse_id: string
-          owner_name: string | null
-          sex: string | null
-          sire_name: string | null
-          trainer_affiliation: string | null
-          trainer_name: string | null
-          updated_at: string
-        }
-        Insert: {
-          birth_date?: string | null
-          breeder_name?: string | null
-          coat_color?: string | null
-          created_at?: string
-          dam_name?: string | null
-          dam_sire_name?: string | null
-          horse_name: string
-          id?: string
-          jv_horse_id: string
-          owner_name?: string | null
-          sex?: string | null
-          sire_name?: string | null
-          trainer_affiliation?: string | null
-          trainer_name?: string | null
-          updated_at?: string
-        }
-        Update: {
-          birth_date?: string | null
-          breeder_name?: string | null
-          coat_color?: string | null
-          created_at?: string
-          dam_name?: string | null
-          dam_sire_name?: string | null
-          horse_name?: string
-          id?: string
-          jv_horse_id?: string
-          owner_name?: string | null
-          sex?: string | null
-          sire_name?: string | null
-          trainer_affiliation?: string | null
-          trainer_name?: string | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
       horse_pedigrees: {
         Row: {
           created_at: string
@@ -196,6 +142,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      horses: {
+        Row: {
+          birth_date: string | null
+          breeder_name: string | null
+          coat_color: string | null
+          created_at: string
+          dam_name: string | null
+          dam_sire_name: string | null
+          horse_name: string
+          id: string
+          jv_horse_id: string
+          owner_name: string | null
+          sex: string | null
+          sire_name: string | null
+          trainer_affiliation: string | null
+          trainer_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          birth_date?: string | null
+          breeder_name?: string | null
+          coat_color?: string | null
+          created_at?: string
+          dam_name?: string | null
+          dam_sire_name?: string | null
+          horse_name: string
+          id?: string
+          jv_horse_id: string
+          owner_name?: string | null
+          sex?: string | null
+          sire_name?: string | null
+          trainer_affiliation?: string | null
+          trainer_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          birth_date?: string | null
+          breeder_name?: string | null
+          coat_color?: string | null
+          created_at?: string
+          dam_name?: string | null
+          dam_sire_name?: string | null
+          horse_name?: string
+          id?: string
+          jv_horse_id?: string
+          owner_name?: string | null
+          sex?: string | null
+          sire_name?: string | null
+          trainer_affiliation?: string | null
+          trainer_name?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       nick_stats: {
         Row: {
@@ -389,6 +389,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pipeline_runs: {
+        Row: {
+          detail: string | null
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          job_name: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          detail?: string | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          job_name: string
+          started_at?: string
+          status: string
+        }
+        Update: {
+          detail?: string | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          job_name?: string
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
       }
       prediction_criteria: {
         Row: {
@@ -1126,6 +1156,12 @@ export type TrainingType = "坂路" | "ウッドチップ";
 export type Facility = "美浦" | "栗東";
 export type SireStatCategory = "distance_band" | "track_type" | "course";
 export type UsageLogTier = "screening" | "standard" | "premium";
+export type PipelineJobName =
+  | "jvlink_weekly_sync"
+  | "compute_recommendation_results"
+  | "sync_netkeiba_recent"
+  | "sync_netkeiba_shutuba";
+export type PipelineRunStatus = "running" | "success" | "failed";
 
 // テーブル別Row型の別名 (Tables<"races"> 等の代わりに使える短縮形)
 export type RaceRow = Tables<"races">;
@@ -1142,3 +1178,4 @@ export type NickStatRow = Tables<"nick_stats">;
 export type ApiUsageLogRow = Tables<"api_usage_log">;
 export type RacePayoutRow = Tables<"race_payouts">;
 export type RaceRecommendationResultRow = Tables<"race_recommendation_results">;
+export type PipelineRunRow = Tables<"pipeline_runs">;

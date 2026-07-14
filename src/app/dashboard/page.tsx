@@ -4,6 +4,7 @@ import type { RaceRank } from "@/lib/supabase/database.types";
 import { RoiTimeSeriesChart, type PeriodStat } from "./RoiTimeSeriesChart";
 import { RecommendationList, type RecommendationRow } from "./RecommendationList";
 import { BreakdownTable, type BreakdownGroup, type BreakdownStat } from "./BreakdownTable";
+import { PipelineStatusBanner, type PipelineRunSummary } from "./PipelineStatusBanner";
 
 const BET_TYPE_LABELS: Record<string, string> = {
   wide: "ワイド",
@@ -78,6 +79,21 @@ function buildBreakdownStats(
 
 export default async function DashboardPage() {
   const supabase = createAdminClient();
+
+  // 3ジョブぶんの最新状態が拾えれば十分なので直近30件だけ見る (各ジョブは週1回しか走らないため)
+  const { data: pipelineRunRows } = await supabase
+    .from("pipeline_runs")
+    .select("job_name, status, started_at, finished_at, error_message")
+    .order("started_at", { ascending: false })
+    .limit(30);
+
+  const pipelineRuns: PipelineRunSummary[] = (pipelineRunRows ?? []).map((r) => ({
+    jobName: r.job_name as PipelineRunSummary["jobName"],
+    status: r.status as PipelineRunSummary["status"],
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    errorMessage: r.error_message,
+  }));
 
   const { data: results } = await supabase
     .from("race_recommendation_results")
@@ -187,6 +203,8 @@ export default async function DashboardPage() {
           レース一覧
         </Link>
       </div>
+
+      <PipelineStatusBanner runs={pipelineRuns} />
 
       {settled.length === 0 ? (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">

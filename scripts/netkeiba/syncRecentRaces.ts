@@ -21,6 +21,47 @@ function parseDaysArg(argv: string[]): number {
   return value;
 }
 
+// Windowsを開かなくてもブラウザの/dashboardから週次バッチの成否が分かるようにするための
+// 可視化専用の記録。ここが失敗してもバッチ本体の信頼性を落としたくないため例外は握りつぶす。
+const JOB_NAME = "sync_netkeiba_recent";
+
+type SyncClient = ReturnType<typeof createNetkeibaSyncClient>;
+
+async function startPipelineRun(supabase: SyncClient): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("pipeline_runs")
+    .insert({ job_name: JOB_NAME, status: "running" })
+    .select("id")
+    .single();
+  if (error) {
+    console.warn("[pipeline_runs] 記録に失敗しましたが処理は継続します:", error.message);
+    return null;
+  }
+  return data.id;
+}
+
+async function finishPipelineRun(
+  supabase: SyncClient,
+  runId: string | null,
+  status: "success" | "failed",
+  errorMessage?: string,
+): Promise<void> {
+  if (!runId) return;
+  const { error } = await supabase
+    .from("pipeline_runs")
+    .update({
+      status,
+      finished_at: new Date().toISOString(),
+      error_message: errorMessage?.slice(0, 2000),
+    })
+    .eq("id", runId);
+  if (error) {
+    console.warn("[pipeline_runs] 記録に失敗しましたが処理は継続します:", error.message);
+  }
+}
+
+let pipelineRunId: string | null = null;
+
 async function main() {
   const args = loadEnvFileFromArgs(process.argv.slice(2));
   const days = parseDaysArg(args);
@@ -30,6 +71,8 @@ async function main() {
   const todayStr = new Date().toISOString().slice(0, 10);
 
   const supabase = createNetkeibaSyncClient();
+  pipelineRunId = await startPipelineRun(supabase);
+
   const { data: races, error } = await supabase
     .from("races")
     .select("jv_race_key, race_date, keibajo_name, race_number, track_type")
@@ -45,6 +88,7 @@ async function main() {
   }
   if (!races || races.length === 0) {
     console.log(`[info] ${sinceStr}以降の対象レースが見つかりませんでした`);
+    await finishPipelineRun(supabase, pipelineRunId, "success");
     return;
   }
 
@@ -62,9 +106,18 @@ async function main() {
   }
   const failed = summaries.filter((s) => s.status !== "ok");
   console.log(`\n合計upserted=${totalUpserted}件、失敗=${failed.length}件`);
+
+  await finishPipelineRun(supabase, pipelineRunId, "success");
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("[netkeiba] 定期同期が予期せず失敗しました:", err);
+  try {
+    const supabase = createNetkeibaSyncClient();
+    const message = err instanceof Error ? err.message : String(err);
+    await finishPipelineRun(supabase, pipelineRunId, "failed", message);
+  } catch (recordErr) {
+    console.warn("[pipeline_runs] 失敗記録にも失敗しました:", recordErr);
+  }
   process.exit(1);
 });

@@ -30,9 +30,43 @@ import csv
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# 週次の無人実行中に単発のネットワーク瞬断でバッチ全体が落ちる事故を防ぐための設定。
+# タイムアウト未設定のurlopenは応答が返らない限り無期限に固まる(2026-07-12、
+# netkeibaスクレイパーのfetch()で同種のハングが実際に発生した既知のリスク)。
+REQUEST_TIMEOUT_SECONDS = 30
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 5
+
+
+def _request_json(req: urllib.request.Request, error_context: str) -> list:
+    """timeoutを必ず指定してurlopenし、一時的な失敗(5xx・接続エラー・タイムアウト)は
+    指数バックオフで再試行する。4xx等の恒久的エラーは即座に諦める。"""
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            if e.code < 500 or attempt == MAX_RETRIES:
+                raise RuntimeError(f"{error_context}失敗 ({e.code}): {body}") from e
+            last_error = e
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt == MAX_RETRIES:
+                raise RuntimeError(f"{error_context}失敗 (通信エラー): {e}") from e
+            last_error = e
+        wait = RETRY_BACKOFF_SECONDS * attempt
+        print(
+            f"[retry] {error_context}を{wait}秒後に再試行します ({attempt}/{MAX_RETRIES}回目): {last_error}",
+            file=sys.stderr,
+        )
+        time.sleep(wait)
+    raise AssertionError("unreachable")
 
 # JRA場コード (JV-Data race_jyo_cd)。この対応表は業界標準でよく知られており確度が高い。
 KEIBAJO_NAMES = {
@@ -322,12 +356,7 @@ class SupabaseClient:
             f"{self.base_url}/{table}?{query}",
             headers={"apikey": self.key, "Authorization": f"Bearer {self.key}"},
         )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{table}への問い合わせ失敗 ({e.code}): {body}") from e
+        return _request_json(req, f"{table}への問い合わせ")
 
     def update(self, table: str, filters: dict, body: dict) -> list:
         """race_entriesのように、既存行の一部カラムだけをrace_id+horse_number等の条件で
@@ -344,12 +373,7 @@ class SupabaseClient:
                 "Prefer": "return=representation",
             },
         )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body_text = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{table}への更新失敗 ({e.code}): {body_text}") from e
+        return _request_json(req, f"{table}への更新")
 
     def upsert(self, table: str, rows: list, on_conflict: str) -> list:
         if not rows:
@@ -369,12 +393,7 @@ class SupabaseClient:
                     "Prefer": "resolution=merge-duplicates,return=representation",
                 },
             )
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    results.extend(json.loads(resp.read().decode("utf-8")))
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"{table}へのupsert失敗 ({e.code}): {body}") from e
+            results.extend(_request_json(req, f"{table}へのupsert"))
         return results
 
 

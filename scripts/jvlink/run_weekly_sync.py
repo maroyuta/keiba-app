@@ -22,8 +22,12 @@
 """
 
 import datetime
+import json
+import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,10 +39,65 @@ OUT_DIR = SCRIPT_DIR / "out"
 LOG_DIR = SCRIPT_DIR / "logs"
 ENV_FILE = SCRIPT_DIR / ".env.jvlink"
 
+JOB_NAME = "jvlink_weekly_sync"
+
 
 def run(cmd: list, log) -> None:
     print(f"$ {' '.join(str(c) for c in cmd)}", file=log, flush=True)
     subprocess.run(cmd, check=True, cwd=SCRIPT_DIR, stdout=log, stderr=log)
+
+
+def load_env_file(path: Path) -> None:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def _pipeline_runs_request(method: str, path: str, body=None) -> "list | None":
+    """pipeline_runsへの状態記録は、Windowsを開かなくてもブラウザの/dashboardから
+    週次バッチの成否が分かるようにするための可視化専用の副機能。ここが失敗しても
+    バッチ本体の信頼性を落としたくないため、例外は握りつぶしてNoneを返す。"""
+    supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not supabase_url or not service_key:
+        return None
+    req = urllib.request.Request(
+        f"{supabase_url.rstrip('/')}/rest/v1/pipeline_runs{path}",
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        method=method,
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        print(f"[pipeline_runs] 記録に失敗しましたが処理は継続します: {e}", file=sys.stderr)
+        return None
+
+
+def start_pipeline_run() -> "str | None":
+    result = _pipeline_runs_request("POST", "", [{"job_name": JOB_NAME, "status": "running"}])
+    return result[0]["id"] if result else None
+
+
+def finish_pipeline_run(run_id: "str | None", status: str, error_message: "str | None" = None) -> None:
+    if not run_id:
+        return
+    body = {
+        "status": status,
+        "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    if error_message:
+        body["error_message"] = error_message[:2000]
+    _pipeline_runs_request("PATCH", f"?id=eq.{run_id}", body)
 
 
 def compute_fromtime() -> str:
@@ -59,6 +118,9 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    load_env_file(ENV_FILE)
+    run_id = start_pipeline_run()
 
     LOG_DIR.mkdir(exist_ok=True)
     OUT_DIR.mkdir(exist_ok=True)
@@ -89,9 +151,11 @@ def main() -> None:
         except subprocess.CalledProcessError as e:
             print(f"[週次同期失敗] {e}", file=log, flush=True)
             print(f"[週次同期失敗] 詳細は {log_path} を確認してください。", file=sys.stderr)
+            finish_pipeline_run(run_id, "failed", str(e))
             sys.exit(1)
         print("[週次同期完了]", file=log, flush=True)
 
+    finish_pipeline_run(run_id, "success")
     print(f"[週次同期完了] ログ: {log_path}")
 
 

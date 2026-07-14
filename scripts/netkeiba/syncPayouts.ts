@@ -112,6 +112,30 @@ export async function syncPayouts(raceIds: string[]): Promise<PayoutSyncSummary[
         }
         entriesUpdated += 1;
       }
+
+      // races.race_classがJV-Link側のjyoken_cd修正より前に同期されたレース(07-04/05/11)は
+      // 依然nullのままで、新馬・未勝利の除外ロジックが一度も効いていなかったことが判明した
+      // (2026-07-13)。同じ結果ページのタイトル・条件表記から取れるraceClassで埋める。
+      // 既に値がある場合は上書きしない(JV-Link側が直っていれば尊重する)。
+      if (parsedResult.meta.raceClass) {
+        const { data: currentRace } = await supabase
+          .from("races")
+          .select("race_class")
+          .eq("id", race.id)
+          .maybeSingle();
+        if (currentRace && !currentRace.race_class) {
+          const { error: raceClassUpdateError } = await supabase
+            .from("races")
+            .update({ race_class: parsedResult.meta.raceClass })
+            .eq("id", race.id);
+          if (raceClassUpdateError) {
+            console.warn(
+              `[netkeiba] races.race_class更新失敗 race_id=${raceId}:`,
+              raceClassUpdateError.message,
+            );
+          }
+        }
+      }
     }
     summaries.push({ raceId, status: "ok", upserted: rows.length, entriesUpdated });
   }

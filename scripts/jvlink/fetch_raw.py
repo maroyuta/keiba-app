@@ -34,6 +34,10 @@ from mojibake import fix_mojibake
 
 JVLINK_PROGID = "JVDTLab.JVLink"
 READ_BUFFER_SIZE = 300000
+# JVStatusがdownloadcountに達しないまま応答し続けた場合に無限待ちにならないための上限。
+# 週次差分同期なら数分で終わる想定だが、JV-Link側のダウンロードサーバーが詰まった場合の
+# セーフティネットとして余裕を持たせている。
+DOWNLOAD_WAIT_TIMEOUT_SECONDS = 1800
 
 
 def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojibake_fix: bool) -> None:
@@ -84,6 +88,7 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
             stale.unlink()
 
     # ダウンロードが必要な分がある場合、JVStatusで完了を待つ。
+    wait_started_at = time.monotonic()
     while downloadcount > 0:
         status = jvlink.JVStatus()
         if status < 0:
@@ -91,6 +96,13 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
         print(f"[JVStatus] downloaded {status}/{downloadcount}", file=sys.stderr)
         if status >= downloadcount:
             break
+        if time.monotonic() - wait_started_at > DOWNLOAD_WAIT_TIMEOUT_SECONDS:
+            jvlink.JVClose()
+            raise RuntimeError(
+                f"JVStatusが{DOWNLOAD_WAIT_TIMEOUT_SECONDS}秒待っても"
+                f"{downloadcount}件のダウンロードを完了しませんでした(最終status={status})。"
+                "JV-Link側のダウンロードサーバーの不調が疑われます。"
+            )
         time.sleep(1)
 
     total_records = 0

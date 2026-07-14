@@ -181,7 +181,9 @@ function parseRaceMeta(
         text !== keibajoName,
     ).join(" ") || null;
 
-  const gradeMatch = html.match(/Icon_GradeType(\d)/);
+  // Icon_GradeType13/16/17/18等の2桁コードはグレードと無関係な別種アイコンのため除外する
+  // (parseShutuba.tsと同根のバグ、2026-07-13修正)。
+  const gradeMatch = html.match(/Icon_GradeType([1-3])(?!\d)/);
   const grade = gradeMatch ? `G${gradeMatch[1]}` : null;
 
   const paceMarkText = $(".RapPace_Title span").first().text().trim();

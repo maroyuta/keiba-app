@@ -27,9 +27,17 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# 週次の無人実行中に単発のネットワーク瞬断でバッチ全体が落ちる事故を防ぐための設定。
+# タイムアウト未設定のurlopenは応答が返らない限り無期限に固まる(2026-07-12、
+# netkeibaスクレイパーのfetch()で同種のハングが実際に発生した既知のリスク)。
+REQUEST_TIMEOUT_SECONDS = 30
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 5
 
 
 def load_env_file(path: str) -> None:
@@ -40,6 +48,32 @@ def load_env_file(path: str) -> None:
                 continue
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def _request_json(req: urllib.request.Request, error_context: str) -> list:
+    """timeoutを必ず指定してurlopenし、一時的な失敗(5xx・接続エラー・タイムアウト)は
+    指数バックオフで再試行する。4xx等の恒久的エラーは即座に諦める。"""
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            if e.code < 500 or attempt == MAX_RETRIES:
+                raise RuntimeError(f"{error_context}失敗 ({e.code}): {body}") from e
+            last_error = e
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt == MAX_RETRIES:
+                raise RuntimeError(f"{error_context}失敗 (通信エラー): {e}") from e
+            last_error = e
+        wait = RETRY_BACKOFF_SECONDS * attempt
+        print(
+            f"[retry] {error_context}を{wait}秒後に再試行します ({attempt}/{MAX_RETRIES}回目): {last_error}",
+            file=sys.stderr,
+        )
+        time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 class SupabaseClient:
@@ -53,12 +87,7 @@ class SupabaseClient:
             f"{self.base_url}/{table}?{query}",
             headers={"apikey": self.key, "Authorization": f"Bearer {self.key}"},
         )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{table}への問い合わせ失敗 ({e.code}): {body}") from e
+        return _request_json(req, f"{table}への問い合わせ")
 
     def upsert(self, table: str, rows: list, on_conflict: str) -> list:
         if not rows:
@@ -74,12 +103,7 @@ class SupabaseClient:
                 "Prefer": "resolution=merge-duplicates,return=representation",
             },
         )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{table}へのupsert失敗 ({e.code}): {body}") from e
+        return _request_json(req, f"{table}へのupsert")
 
 
 def combo_key(a: int, b: int) -> str:
@@ -143,6 +167,50 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+JOB_NAME = "compute_recommendation_results"
+
+
+def _pipeline_runs_request(method: str, path: str, body=None) -> "list | None":
+    """pipeline_runsへの状態記録は、Windowsを開かなくてもブラウザの/dashboardから
+    週次バッチの成否が分かるようにするための可視化専用の副機能。ここが失敗しても
+    バッチ本体の信頼性を落としたくないため、例外は握りつぶしてNoneを返す。"""
+    supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not supabase_url or not service_key:
+        return None
+    req = urllib.request.Request(
+        f"{supabase_url.rstrip('/')}/rest/v1/pipeline_runs{path}",
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        method=method,
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        print(f"[pipeline_runs] 記録に失敗しましたが処理は継続します: {e}", file=sys.stderr)
+        return None
+
+
+def start_pipeline_run() -> "str | None":
+    result = _pipeline_runs_request("POST", "", [{"job_name": JOB_NAME, "status": "running"}])
+    return result[0]["id"] if result else None
+
+
+def finish_pipeline_run(run_id: "str | None", status: str, error_message: "str | None" = None) -> None:
+    if not run_id:
+        return
+    body = {"status": status, "finished_at": _now_iso()}
+    if error_message:
+        body["error_message"] = error_message[:2000]
+    _pipeline_runs_request("PATCH", f"?id=eq.{run_id}", body)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="honmei/aite推奨とrace_payoutsを突き合わせてrace_recommendation_resultsを計算する"
@@ -167,62 +235,69 @@ def main() -> None:
         sys.exit(1)
 
     client = SupabaseClient(supabase_url, service_key)
+    # dry-runは手動確認用の実行であり、無人の週次バッチではないため記録対象から外す
+    run_id = None if args.dry_run else start_pipeline_run()
 
-    races = client.select(
-        "races",
-        {
-            "honmei_horse_number": "not.is.null",
-            "select": "id,honmei_horse_number,aite_horse_number,bet_type,bet_amount_wide,bet_amount_umaren,race_rank",
-        },
-    )
-    print(f"[読み込み] honmei_horse_number設定済みのrace={len(races)}件", file=sys.stderr)
+    try:
+        races = client.select(
+            "races",
+            {
+                "honmei_horse_number": "not.is.null",
+                "select": "id,honmei_horse_number,aite_horse_number,bet_type,bet_amount_wide,bet_amount_umaren,race_rank",
+            },
+        )
+        print(f"[読み込み] honmei_horse_number設定済みのrace={len(races)}件", file=sys.stderr)
 
-    race_ids = [r["id"] for r in races]
-    payouts_by_race: dict = {rid: [] for rid in race_ids}
-    if race_ids:
-        # PostgRESTのURL長制限を避けるため、race_idを適当なサイズでチャンクして問い合わせる
-        chunk_size = 100
-        for i in range(0, len(race_ids), chunk_size):
-            chunk = race_ids[i : i + chunk_size]
-            rows = client.select(
-                "race_payouts",
-                {
-                    "race_id": f"in.({','.join(chunk)})",
-                    "bet_type": "in.(wide,umaren)",
-                    "select": "race_id,bet_type,combination,payout_yen",
-                },
-            )
-            for row in rows:
-                payouts_by_race[row["race_id"]].append(row)
+        race_ids = [r["id"] for r in races]
+        payouts_by_race: dict = {rid: [] for rid in race_ids}
+        if race_ids:
+            # PostgRESTのURL長制限を避けるため、race_idを適当なサイズでチャンクして問い合わせる
+            chunk_size = 100
+            for i in range(0, len(race_ids), chunk_size):
+                chunk = race_ids[i : i + chunk_size]
+                rows = client.select(
+                    "race_payouts",
+                    {
+                        "race_id": f"in.({','.join(chunk)})",
+                        "bet_type": "in.(wide,umaren)",
+                        "select": "race_id,bet_type,combination,payout_yen",
+                    },
+                )
+                for row in rows:
+                    payouts_by_race[row["race_id"]].append(row)
 
-    result_rows = []
-    skipped_no_payout = 0
-    skipped_no_bet = 0
-    for race in races:
-        payouts = payouts_by_race.get(race["id"], [])
-        if not payouts:
-            skipped_no_payout += 1
-            continue
-        row = build_result_row(race, payouts)
-        if row is None:
-            skipped_no_bet += 1
-            continue
-        result_rows.append(row)
+        result_rows = []
+        skipped_no_payout = 0
+        skipped_no_bet = 0
+        for race in races:
+            payouts = payouts_by_race.get(race["id"], [])
+            if not payouts:
+                skipped_no_payout += 1
+                continue
+            row = build_result_row(race, payouts)
+            if row is None:
+                skipped_no_bet += 1
+                continue
+            result_rows.append(row)
 
-    print(
-        f"[集計] 対象={len(result_rows)}件 "
-        f"(未確定でスキップ={skipped_no_payout}, 賭け目未設定でスキップ={skipped_no_bet})",
-        file=sys.stderr,
-    )
+        print(
+            f"[集計] 対象={len(result_rows)}件 "
+            f"(未確定でスキップ={skipped_no_payout}, 賭け目未設定でスキップ={skipped_no_bet})",
+            file=sys.stderr,
+        )
 
-    if args.dry_run:
-        for row in result_rows:
-            print(json.dumps(row, ensure_ascii=False))
-        print("[dry-run] Supabaseへの書き込みはスキップしました", file=sys.stderr)
-        return
+        if args.dry_run:
+            for row in result_rows:
+                print(json.dumps(row, ensure_ascii=False))
+            print("[dry-run] Supabaseへの書き込みはスキップしました", file=sys.stderr)
+            return
 
-    results = client.upsert("race_recommendation_results", result_rows, on_conflict="race_id")
-    print(f"[race_recommendation_results] {len(results)}件 upsert完了", file=sys.stderr)
+        results = client.upsert("race_recommendation_results", result_rows, on_conflict="race_id")
+        print(f"[race_recommendation_results] {len(results)}件 upsert完了", file=sys.stderr)
+        finish_pipeline_run(run_id, "success")
+    except Exception as e:
+        finish_pipeline_run(run_id, "failed", str(e))
+        raise
 
 
 if __name__ == "__main__":
