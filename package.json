@@ -13,7 +13,8 @@
     "sync:netkeiba:payouts": "tsx scripts/netkeiba/runPayouts.ts",
     "sync:netkeiba:shutuba": "tsx scripts/netkeiba/runShutuba.ts",
     "sync:netkeiba:shutuba-watch": "tsx scripts/netkeiba/runShutubaWatch.ts",
-    "sync:netkeiba:historical": "tsx scripts/netkeiba/runHistoricalRaces.ts"
+    "sync:netkeiba:historical": "tsx scripts/netkeiba/runHistoricalRaces.ts",
+    "diagnose:upcoming": "tsx scripts/diagnoseUpcoming.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
