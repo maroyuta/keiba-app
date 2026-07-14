@@ -53,14 +53,14 @@ export default async function RaceDiagnosisPage({
 
   const buySection = race.honmei_horse_number && (
     <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5">
-      <h2 className="text-xs font-semibold text-emerald-400">買い目</h2>
-      <p className="mt-1 text-xl font-bold text-white">
+      <h2 className="text-xs font-semibold text-emerald-600">買い目</h2>
+      <p className="mt-1 text-xl font-bold text-zinc-900">
         {race.honmei_horse_number}
         {race.aite_horse_number && (
-          <span className="text-emerald-400"> → {race.aite_horse_number}</span>
+          <span className="text-emerald-600"> → {race.aite_horse_number}</span>
         )}
         {race.bet_type && (
-          <span className="ml-2 text-sm font-normal text-zinc-400">
+          <span className="ml-2 text-sm font-normal text-zinc-500">
             ({BET_TYPE_LABELS[race.bet_type as BetType]})
           </span>
         )}
@@ -76,16 +76,16 @@ export default async function RaceDiagnosisPage({
   );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-white text-zinc-900">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6 sm:px-6">
-        <header className="relative flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+        <header className="relative flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
           <div className="absolute top-4 right-4">
             <RankBadge rank={race.race_rank as RaceRank | null} />
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs font-medium text-emerald-400/90">
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs font-medium text-emerald-600">
             <span>{race.keibajo_name}</span>
-            <span className="text-zinc-600">・</span>
+            <span className="text-zinc-300">・</span>
             <span>
               {race.track_type}
               {race.distance_m}m
@@ -93,19 +93,19 @@ export default async function RaceDiagnosisPage({
             </span>
             {race.race_class && (
               <>
-                <span className="text-zinc-600">・</span>
+                <span className="text-zinc-300">・</span>
                 <span>{race.race_class}</span>
               </>
             )}
             {race.entry_count && (
               <>
-                <span className="text-zinc-600">・</span>
+                <span className="text-zinc-300">・</span>
                 <span>{race.entry_count}頭</span>
               </>
             )}
             {(race.weather || race.track_condition) && (
               <>
-                <span className="text-zinc-600">・</span>
+                <span className="text-zinc-300">・</span>
                 <span>
                   {race.weather}
                   {race.weather && race.track_condition && "/"}
@@ -115,12 +115,12 @@ export default async function RaceDiagnosisPage({
             )}
           </div>
 
-          <h1 className="text-center text-2xl font-bold text-white">
+          <h1 className="text-center text-2xl font-bold text-zinc-900">
             {race.grade && <span className="mr-2 text-amber-400">{race.grade}</span>}
             {race.race_number}R {race.race_name || race.race_class || "—"}
           </h1>
 
-          <div className="text-center text-xs text-zinc-400">
+          <div className="text-center text-xs text-zinc-500">
             {race.race_date}
             {race.post_time && ` ${race.post_time.slice(0, 5)}発走`}
           </div>
@@ -131,9 +131,9 @@ export default async function RaceDiagnosisPage({
             </p>
           )}
 
-          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border-t border-zinc-800 pt-3">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border-t border-zinc-200 pt-3">
             {RANK_LEGEND.map(({ rank, label }) => (
-              <span key={rank} className="flex items-center gap-1.5 text-xs text-zinc-400">
+              <span key={rank} className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <RankBadge rank={rank} />
                 {label}
               </span>
@@ -172,14 +172,14 @@ export default async function RaceDiagnosisPage({
                     ? "border-amber-400/70 bg-amber-400/10 ring-1 ring-amber-400/40"
                     : isAite
                       ? "border-emerald-400/70 bg-emerald-400/10 ring-1 ring-emerald-400/40"
-                      : "border-zinc-800 bg-zinc-900/40"
+                      : "border-zinc-200 bg-zinc-50"
                 } ${entry.is_kesshi ? "opacity-50" : ""}`}
               >
                 <WakuBadge waku={entry.post_position} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <span className="text-xs text-zinc-500">{entry.horse_number}番</span>
-                    <span className="truncate font-bold text-white">
+                    <span className="truncate font-bold text-zinc-900">
                       {entry.horses.horse_name}
                     </span>
                     {isHonmei && (
@@ -198,7 +198,7 @@ export default async function RaceDiagnosisPage({
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs text-emerald-400/90">
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-600">
                     <span>
                       {entry.expected_popularity ? `${entry.expected_popularity}人気` : "—"}
                       {entry.odds_win !== null && ` (${formatOdds(entry.odds_win)}倍)`}
@@ -228,10 +228,10 @@ export default async function RaceDiagnosisPage({
               {analysisItems.map((item) => (
                 <div
                   key={item.label}
-                  className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3"
+                  className="rounded-xl border border-zinc-200 bg-zinc-50 p-3"
                 >
-                  <dt className="text-xs font-medium text-emerald-400/90">{item.label}</dt>
-                  <dd className="mt-1 text-sm leading-relaxed text-zinc-200">{item.text}</dd>
+                  <dt className="text-xs font-medium text-emerald-600">{item.label}</dt>
+                  <dd className="mt-1 text-sm leading-relaxed text-zinc-700">{item.text}</dd>
                 </div>
               ))}
             </dl>

@@ -103,9 +103,17 @@ export default async function DashboardPage() {
     .not("computed_at", "is", null)
     .order("computed_at", { ascending: false });
 
+  // これより前(バックテスト・検証用のバッチ)は集計対象から除外する。実運用の成績のみを
+  // 見たいという要望(2026-07-15)を受けた設定で、元データ自体は消していないため、
+  // 過去の検証結果はSupabase側に残ったまま参照できる(この定数を変えれば見え方も変わる)。
+  const LIVE_TRACKING_START_DATE = "2026-07-18";
+
   const settled = (results ?? []).filter(
     (r): r is typeof r & { races: NonNullable<typeof r.races>; stake_yen: number } =>
-      r.races !== null && r.stake_yen !== null && r.stake_yen > 0,
+      r.races !== null &&
+      r.stake_yen !== null &&
+      r.stake_yen > 0 &&
+      r.races.race_date >= LIVE_TRACKING_START_DATE,
   );
 
   const totalStake = settled.reduce((sum, r) => sum + r.stake_yen, 0);
@@ -195,7 +203,12 @@ export default async function DashboardPage() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6 sm:px-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">回収率ダッシュボード</h1>
+        <div>
+          <h1 className="text-xl font-bold">回収率ダッシュボード</h1>
+          <p className="text-xs text-zinc-500">
+            {LIVE_TRACKING_START_DATE}以降(実運用分)を集計。それ以前のバックテストは含みません
+          </p>
+        </div>
         <Link
           href="/races"
           className="text-sm text-zinc-500 hover:underline dark:text-zinc-400"

@@ -62,13 +62,13 @@ const CELL_STYLES: Record<string, string> = {
   S: "border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20",
   A: "border-teal-500/50 bg-teal-500/10 hover:bg-teal-500/20",
   B: "border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20",
-  C: "border-zinc-700/60 bg-zinc-800/40 opacity-60 hover:opacity-80",
-  none: "border-zinc-800 bg-zinc-900/40 hover:border-emerald-500/40 hover:bg-emerald-500/5",
+  C: "border-zinc-300 bg-zinc-100 opacity-60 hover:opacity-80",
+  none: "border-zinc-200 bg-zinc-50 hover:border-emerald-500/40 hover:bg-emerald-500/5",
 };
 
 function RaceCell({ race }: { race: Race | undefined }) {
   if (!race) {
-    return <div className="h-16 rounded-lg border border-dashed border-zinc-800/60" />;
+    return <div className="h-16 rounded-lg border border-dashed border-zinc-300" />;
   }
   const styleKey = race.race_rank ?? "none";
   return (
@@ -88,7 +88,7 @@ function RaceCell({ race }: { race: Race | undefined }) {
         )}
         <RankBadge rank={race.race_rank as RaceRank | null} />
       </div>
-      <span className="truncate text-[11px] leading-tight font-medium text-zinc-100">
+      <span className="truncate text-[11px] leading-tight font-medium text-zinc-900">
         {race.race_name || race.race_class || "—"}
       </span>
       <span className="truncate text-[10px] leading-tight text-zinc-500">
@@ -114,7 +114,7 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
           const first = venueRaces[0];
           return (
             <div key={first.keibajo_code} className="px-1 pb-1 text-center">
-              <div className="text-xs font-bold text-white">{first.keibajo_name}</div>
+              <div className="text-xs font-bold text-zinc-900">{first.keibajo_name}</div>
               <div className="text-[10px] text-zinc-500">
                 {first.track_condition ? `馬場:${first.track_condition}` : ""}
               </div>
@@ -209,10 +209,10 @@ export default async function RacesPage({
     }
 
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      <div className="min-h-screen bg-white text-zinc-900">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6">
           <div className="flex items-center justify-between gap-2">
-            <h1 className="text-xl font-bold text-white">
+            <h1 className="text-xl font-bold text-zinc-900">
               {usingFallback ? "直近のレース" : "今週のレース"}
             </h1>
             <span className="text-xs text-zinc-500">単日ごとに見る場合は各日付見出しをタップ</span>
@@ -232,7 +232,7 @@ export default async function RacesPage({
                 <div key={raceDate} className="flex flex-col gap-3">
                   <Link
                     href={`/races?date=${raceDate}`}
-                    className="inline-flex w-fit items-center gap-1.5 border-b border-emerald-500/30 pb-1 text-sm font-semibold text-emerald-400 transition-colors hover:text-emerald-300"
+                    className="inline-flex w-fit items-center gap-1.5 border-b border-emerald-500/30 pb-1 text-sm font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
                   >
                     {dateLabel}
                   </Link>
@@ -272,31 +272,31 @@ export default async function RacesPage({
   });
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-white text-zinc-900">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
         <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-bold text-white">レース一覧</h1>
-          <Link href="/races" className="text-xs text-emerald-400/80 hover:text-emerald-300">
+          <h1 className="text-xl font-bold text-zinc-900">レース一覧</h1>
+          <Link href="/races" className="text-xs text-emerald-600 hover:text-emerald-700">
             ← 今週まとめて見る
           </Link>
         </div>
 
-        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2">
           {prevDate ? (
             <Link
               href={`/races?date=${prevDate}`}
-              className="rounded-full border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-emerald-500/50 hover:text-emerald-400"
+              className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
             >
               ← 前日
             </Link>
           ) : (
             <span />
           )}
-          <span className="text-sm font-medium text-emerald-400/90">{dateLabel}</span>
+          <span className="text-sm font-medium text-emerald-600">{dateLabel}</span>
           {nextDate ? (
             <Link
               href={`/races?date=${nextDate}`}
-              className="rounded-full border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-emerald-500/50 hover:text-emerald-400"
+              className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
             >
               次 →
             </Link>
