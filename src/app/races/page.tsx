@@ -57,18 +57,19 @@ function groupByVenue(rows: Race[]): Race[][] {
 }
 
 // レースを開催場(x軸)×レース番号1-12(y軸)のグリッドで俯瞰する。
-// screening(Haiku)でC評価になったレースは鼠色で弾かれたことが一目で分かるようにする。
+// screening(Haiku)でC評価になったレースは弾かれたことが一目で分かるようにする。
 const CELL_STYLES: Record<string, string> = {
-  S: "border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20",
-  A: "border-teal-500/50 bg-teal-500/10 hover:bg-teal-500/20",
-  B: "border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20",
-  C: "border-zinc-300 bg-zinc-100 opacity-60 hover:opacity-80",
-  none: "border-zinc-200 bg-zinc-50 hover:border-emerald-500/40 hover:bg-emerald-500/5",
+  S: "border-[#ff9f1c]/60 bg-[#ff9f1c]/10 hover:bg-[#ff9f1c]/20",
+  A: "border-teal-400/45 bg-teal-400/10 hover:bg-teal-400/20",
+  B: "border-[#f2efe6]/20 bg-[#f2efe6]/[0.05] hover:bg-[#f2efe6]/10",
+  C: "border-[#f2efe6]/8 bg-[#f2efe6]/[0.02] opacity-50 hover:opacity-75",
+  none:
+    "border-[#f2efe6]/10 bg-[#12241f] hover:border-[#ff9f1c]/40 hover:bg-[#ff9f1c]/5",
 };
 
 function RaceCell({ race }: { race: Race | undefined }) {
   if (!race) {
-    return <div className="h-12 rounded-lg border border-dashed border-zinc-300" />;
+    return <div className="h-12 rounded-lg border border-dashed border-[#f2efe6]/10" />;
   }
   const styleKey = race.race_rank ?? "none";
   return (
@@ -80,7 +81,7 @@ function RaceCell({ race }: { race: Race | undefined }) {
     >
       <div className="flex items-center justify-between gap-1">
         {race.grade ? (
-          <span className="shrink-0 rounded bg-amber-400/20 px-0.5 text-[7px] font-bold text-amber-400">
+          <span className="shrink-0 rounded bg-[#ff9f1c]/20 px-0.5 text-[7px] font-bold text-[#ff9f1c]">
             {race.grade}
           </span>
         ) : (
@@ -88,10 +89,10 @@ function RaceCell({ race }: { race: Race | undefined }) {
         )}
         <RankBadge rank={race.race_rank as RaceRank | null} />
       </div>
-      <span className="truncate text-[9px] leading-tight font-medium text-zinc-900">
+      <span className="truncate text-[9px] leading-tight font-medium text-[#f2efe6]">
         {race.race_name || race.race_class || "—"}
       </span>
-      <span className="truncate text-[8px] leading-tight text-zinc-500">
+      <span className="truncate font-mono text-[8px] leading-tight text-[#f2efe6]/45">
         {formatPostTime(race.post_time)} {race.entry_count ? `${race.entry_count}頭` : ""}
       </span>
     </Link>
@@ -114,8 +115,8 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
           const first = venueRaces[0];
           return (
             <div key={first.keibajo_code} className="px-1 pb-1 text-center">
-              <div className="text-[11px] font-bold text-zinc-900">{first.keibajo_name}</div>
-              <div className="text-[8px] text-zinc-500">
+              <div className="text-[11px] font-bold text-[#f2efe6]">{first.keibajo_name}</div>
+              <div className="text-[8px] text-[#f2efe6]/40">
                 {first.track_condition ? `馬場:${first.track_condition}` : ""}
               </div>
             </div>
@@ -124,7 +125,7 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
 
         {raceNumbers.map((num) => (
           <div key={num} className="contents">
-            <div className="flex items-center justify-center text-[10px] font-bold text-zinc-500">
+            <div className="flex items-center justify-center font-mono text-[10px] font-bold text-[#f2efe6]/45">
               {num}R
             </div>
             {venueGroupsList.map((venueRaces) => (
@@ -136,18 +137,19 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
           </div>
         ))}
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-zinc-500">
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[#f2efe6]/45">
         <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400" />S
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#ff9f1c]" />S
         </span>
         <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-teal-500" />A
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-teal-400" />A
         </span>
         <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-500" />B
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f2efe6]/40" />B
         </span>
         <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-zinc-600" />C(screening除外)
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f2efe6]/15" />
+          C(screening除外)
         </span>
       </div>
     </div>
@@ -209,17 +211,17 @@ export default async function RacesPage({
     }
 
     return (
-      <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white text-zinc-900">
+      <div className="min-h-screen bg-[#0b1a17] bg-[radial-gradient(circle_at_20%_0%,rgba(255,159,28,0.08),transparent_45%)] text-[#f2efe6]">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6">
           <div className="flex items-center justify-between gap-2">
-            <h1 className="text-xl font-bold text-zinc-900">
+            <h1 className="text-xl font-bold text-[#f2efe6]">
               {usingFallback ? "直近のレース" : "今週のレース"}
             </h1>
-            <span className="text-xs text-zinc-500">単日ごとに見る場合は各日付見出しをタップ</span>
+            <span className="text-xs text-[#f2efe6]/45">単日ごとに見る場合は各日付見出しをタップ</span>
           </div>
 
           {dateGroups.size === 0 ? (
-            <p className="text-sm text-zinc-500">登録されているレースがありません。</p>
+            <p className="text-sm text-[#f2efe6]/45">登録されているレースがありません。</p>
           ) : (
             [...dateGroups.entries()].map(([raceDate, dateRows]) => {
               const dateLabel = new Date(`${raceDate}T00:00:00Z`).toLocaleDateString("ja-JP", {
@@ -232,7 +234,7 @@ export default async function RacesPage({
                 <div key={raceDate} className="flex flex-col gap-3">
                   <Link
                     href={`/races?date=${raceDate}`}
-                    className="inline-flex w-fit items-center gap-1.5 border-b border-emerald-500/30 pb-1 text-sm font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
+                    className="inline-flex w-fit items-center gap-1.5 border-b border-[#ff9f1c]/40 pb-1 text-sm font-semibold text-[#ff9f1c] transition-colors hover:text-[#ffb44d]"
                   >
                     {dateLabel}
                   </Link>
@@ -272,31 +274,31 @@ export default async function RacesPage({
   });
 
   return (
-    <div className="min-h-screen bg-white text-zinc-900">
+    <div className="min-h-screen bg-[#0b1a17] bg-[radial-gradient(circle_at_20%_0%,rgba(255,159,28,0.08),transparent_45%)] text-[#f2efe6]">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
         <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-bold text-zinc-900">レース一覧</h1>
-          <Link href="/races" className="text-xs text-emerald-600 hover:text-emerald-700">
+          <h1 className="text-xl font-bold text-[#f2efe6]">レース一覧</h1>
+          <Link href="/races" className="text-xs text-[#ff9f1c] hover:text-[#ffb44d]">
             ← 今週まとめて見る
           </Link>
         </div>
 
-        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#f2efe6]/10 bg-[#12241f] px-3 py-2">
           {prevDate ? (
             <Link
               href={`/races?date=${prevDate}`}
-              className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
+              className="rounded-full border border-[#f2efe6]/18 px-3 py-1.5 text-sm text-[#f2efe6]/70 transition-colors hover:border-[#ff9f1c]/50 hover:text-[#ff9f1c]"
             >
               ← 前日
             </Link>
           ) : (
             <span />
           )}
-          <span className="text-sm font-medium text-emerald-600">{dateLabel}</span>
+          <span className="text-sm font-medium text-[#ff9f1c]">{dateLabel}</span>
           {nextDate ? (
             <Link
               href={`/races?date=${nextDate}`}
-              className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
+              className="rounded-full border border-[#f2efe6]/18 px-3 py-1.5 text-sm text-[#f2efe6]/70 transition-colors hover:border-[#ff9f1c]/50 hover:text-[#ff9f1c]"
             >
               次 →
             </Link>
@@ -306,7 +308,7 @@ export default async function RacesPage({
         </div>
 
         {rows.length === 0 ? (
-          <p className="text-sm text-zinc-500">この日のレースは登録されていません。</p>
+          <p className="text-sm text-[#f2efe6]/45">この日のレースは登録されていません。</p>
         ) : (
           <DateGrid dateRows={rows} />
         )}
