@@ -68,19 +68,19 @@ const CELL_STYLES: Record<string, string> = {
 
 function RaceCell({ race }: { race: Race | undefined }) {
   if (!race) {
-    return <div className="h-16 rounded-lg border border-dashed border-zinc-300" />;
+    return <div className="h-12 rounded-lg border border-dashed border-zinc-300" />;
   }
   const styleKey = race.race_rank ?? "none";
   return (
     <Link
       href={`/races/${race.id}`}
-      className={`flex h-16 flex-col justify-between overflow-hidden rounded-lg border px-1.5 py-1 transition-colors ${
+      className={`flex h-12 flex-col justify-between overflow-hidden rounded-lg border px-1 py-0.5 transition-colors ${
         CELL_STYLES[styleKey] ?? CELL_STYLES.none
       }`}
     >
       <div className="flex items-center justify-between gap-1">
         {race.grade ? (
-          <span className="shrink-0 rounded bg-amber-400/20 px-1 text-[9px] font-bold text-amber-400">
+          <span className="shrink-0 rounded bg-amber-400/20 px-0.5 text-[7px] font-bold text-amber-400">
             {race.grade}
           </span>
         ) : (
@@ -88,10 +88,10 @@ function RaceCell({ race }: { race: Race | undefined }) {
         )}
         <RankBadge rank={race.race_rank as RaceRank | null} />
       </div>
-      <span className="truncate text-[11px] leading-tight font-medium text-zinc-900">
+      <span className="truncate text-[9px] leading-tight font-medium text-zinc-900">
         {race.race_name || race.race_class || "—"}
       </span>
-      <span className="truncate text-[10px] leading-tight text-zinc-500">
+      <span className="truncate text-[8px] leading-tight text-zinc-500">
         {formatPostTime(race.post_time)} {race.entry_count ? `${race.entry_count}頭` : ""}
       </span>
     </Link>
@@ -106,16 +106,16 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
   return (
     <div className="overflow-x-auto">
       <div
-        className="grid min-w-max gap-1.5"
-        style={{ gridTemplateColumns: `2.5rem repeat(${venueGroupsList.length}, 9rem)` }}
+        className="grid min-w-max gap-1"
+        style={{ gridTemplateColumns: `1.75rem repeat(${venueGroupsList.length}, 5.5rem)` }}
       >
         <div />
         {venueGroupsList.map((venueRaces) => {
           const first = venueRaces[0];
           return (
             <div key={first.keibajo_code} className="px-1 pb-1 text-center">
-              <div className="text-xs font-bold text-zinc-900">{first.keibajo_name}</div>
-              <div className="text-[10px] text-zinc-500">
+              <div className="text-[11px] font-bold text-zinc-900">{first.keibajo_name}</div>
+              <div className="text-[8px] text-zinc-500">
                 {first.track_condition ? `馬場:${first.track_condition}` : ""}
               </div>
             </div>
@@ -124,7 +124,7 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
 
         {raceNumbers.map((num) => (
           <div key={num} className="contents">
-            <div className="flex items-center justify-center text-xs font-bold text-zinc-500">
+            <div className="flex items-center justify-center text-[10px] font-bold text-zinc-500">
               {num}R
             </div>
             {venueGroupsList.map((venueRaces) => (
