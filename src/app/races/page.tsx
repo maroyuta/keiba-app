@@ -209,7 +209,7 @@ export default async function RacesPage({
     }
 
     return (
-      <div className="min-h-screen bg-white text-zinc-900">
+      <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white text-zinc-900">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6">
           <div className="flex items-center justify-between gap-2">
             <h1 className="text-xl font-bold text-zinc-900">
