@@ -5,8 +5,10 @@ import { createNetkeibaSyncClient } from "./supabaseClient";
 // 指定日のracesからjv_race_keyを引いて、そのままnetkeiba race_idとしてrace_payoutsを同期する
 // (netkeiba race_id = jv_race_keyの一致は既存のsyncPastPerformances.tsで実データ検証済み)。
 // 障害レースは配当自体は取れるが診断対象外のため除外。当日・未来のレースは配当が未確定のため除外。
+// ただし当日の全レース終了後(夕方)にSNS結果報告用の同期をしたい場合は--allow-todayで
+// 当日のみ許可できる(未来の日付は引き続き不可)。
 //
-// 使い方: npm run sync:netkeiba:payouts -- --date 2026-07-11 [--env-file <path>]
+// 使い方: npm run sync:netkeiba:payouts -- --date 2026-07-11 [--allow-today] [--env-file <path>]
 async function main() {
   const args = loadEnvFileFromArgs(process.argv.slice(2));
   const dateIdx = args.indexOf("--date");
@@ -16,9 +18,14 @@ async function main() {
     process.exit(1);
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  if (date >= todayStr) {
-    console.error(`${date}は当日・未来の日付です。配当が確定済みの過去日のみ指定してください。`);
+  const allowToday = args.includes("--allow-today");
+  // JST基準の今日(サーバーTZに依存させない)
+  const todayStr = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  if (date > todayStr || (date === todayStr && !allowToday)) {
+    console.error(
+      `${date}は当日・未来の日付です。配当が確定済みの過去日のみ指定してください。` +
+        `(当日の全レース終了後なら--allow-todayで実行可能)`
+    );
     process.exit(1);
   }
 

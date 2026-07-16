@@ -14,7 +14,9 @@
     "sync:netkeiba:shutuba": "tsx scripts/netkeiba/runShutuba.ts",
     "sync:netkeiba:shutuba-watch": "tsx scripts/netkeiba/runShutubaWatch.ts",
     "sync:netkeiba:historical": "tsx scripts/netkeiba/runHistoricalRaces.ts",
-    "diagnose:upcoming": "tsx scripts/diagnoseUpcoming.ts"
+    "diagnose:upcoming": "tsx scripts/diagnoseUpcoming.ts",
+    "sns:pack": "tsx scripts/sns/buildContentPack.ts",
+    "sns:video": "tsx scripts/sns/makeVideo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
@@ -32,8 +34,13 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "ffmpeg-static": "^5.3.0",
+    "subset-font": "^2.5.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.0",
     "typescript": "^5"
+  },
+  "allowScripts": {
+    "ffmpeg-static@5.3.0": true
   }
 }

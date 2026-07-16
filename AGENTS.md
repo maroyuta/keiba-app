@@ -6,6 +6,18 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
+## 📣 SNS運用(X+TikTok): プラン策定+生成システム実装済み (2026-07-16)
+
+`docs/twitter-strategy.md`(戦略)+`docs/twitter-launch-assets.md`(実行手順・文面一式)参照。要点: 当面全部無料で「平場×画像×透明性」を差別化軸に、有料化はn≥50・ROI>100%・フォロワー1,000〜が揃うまで凍結。**「race_rank=S限定有料化」案は07-14の「Sから的中ゼロ」分析と矛盾するため、有料単位は「本気診断実行レース」ベースに変更済み。**
+
+**実装済み(2026-07-16、実データで動作検証済み):**
+- シェア画像3テンプレ: `/api/sns/race-card/[raceId]`・`/api/sns/digest?date=`・`/api/sns/results?from=&to=`(各`?format=story`で1080x1920縦型)。`src/lib/sns/`(theme/font/cards)。フォントはNoto Sans JP(OFL、`assets/fonts/`)をsubset-fontで動的サブセット化(1リクエスト0.5秒前後)。**next.config.tsに`serverExternalPackages: ["subset-font","harfbuzzjs"]`必須**(無いとwasmパスが壊れて500)
+- 週次コンテンツパック: `npm run sns:pack -- --date YYYY-MM-DD --mode preview|results --env-file .env.local`(dev server起動が前提)→`sns-out/`に画像+縦動画(ffmpeg-static)+投稿文ドラフト(posts.md)を一括生成
+- `runPayouts.ts`に`--allow-today`追加(土日夕方の当日結果報告用: payouts同期→`python3 scripts/compute_recommendation_results.py --env-file .env.local`→`sns:pack --mode results`のMac単独フロー)
+- アカウント名「AI競馬アナリスト」(`src/lib/sns/theme.ts`の`SNS_BRAND`で一元管理)。既存X垢(2,500)とTikTok垢(8,000)を転用する方針
+
+**残タスク:** ユーザー側の手作業(改名・投稿、7/20週から。チェックリストはstrategy§5)。X Premium加入判断は保留。ヘッダー画像(1500x500)の専用ルートは未実装(digest-og.pngのトリミングで代用)。
+
 ## 🔄 セッション引き継ぎメモ (2026-07-14朝、コンテキスト逼迫のため新規会話へ移行) ★最新・ここから読む
 
 **このセッションで起きたこと(時系列):**

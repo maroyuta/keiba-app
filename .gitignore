@@ -58,3 +58,6 @@ scripts/netkeiba/logs/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# SNS投稿コンテンツパック(生成物)
+/sns-out/
