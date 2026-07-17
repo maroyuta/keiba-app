@@ -14,10 +14,22 @@ export type ValidationResult = {
   warnings: string[];
 };
 
-// 診断済みレースがこれ未満なら、バッチが途中で落ちた可能性が高い
-const MIN_DIAGNOSED_RACES = 8;
+// 診断対象(新馬・未勝利・障害を除く=diagnoseUpcoming.tsと同じ条件)のうち、
+// 実際に診断できた割合がこれ未満なら、バッチが途中で落ちたとみなす。
+// ⚠️固定件数で判定してはいけない: 開催によって対象レース数が大きく変わる
+// (2026-07-18は36R中9Rしか対象がなく、固定閾値8だと2件漏れただけで止まっていた)。
+const MIN_DIAGNOSED_RATIO = 0.8;
 // オッズが入っている馬の割合がこれ未満なら、オッズ取得が壊れている
 const MIN_ODDS_COVERAGE = 0.8;
+
+// diagnoseUpcoming.tsの除外条件と揃える(ここがズレると門番が誤判定する)
+function isDiagnosisTarget(race: { race_class: string | null; track_type: string }): boolean {
+  return (
+    !race.race_class?.includes("新馬") &&
+    !race.race_class?.includes("未勝利") &&
+    race.track_type !== "障害"
+  );
+}
 
 export async function validatePreview(supabase: Db, date: string): Promise<ValidationResult> {
   const errors: string[] = [];
@@ -25,20 +37,21 @@ export async function validatePreview(supabase: Db, date: string): Promise<Valid
 
   const { data: races, error } = await supabase
     .from("races")
-    .select("id, race_rank, honmei_horse_number, aite_horse_number")
+    .select("id, race_class, track_type, race_rank, honmei_horse_number, aite_horse_number")
     .eq("race_date", date);
   if (error) {
     return { ok: false, errors: [`racesの取得に失敗: ${error.message}`], warnings };
   }
 
   const all = races ?? [];
-  const diagnosed = all.filter((r) => r.race_rank !== null);
+  const targets = all.filter(isDiagnosisTarget);
+  const diagnosed = targets.filter((r) => r.race_rank !== null);
   if (diagnosed.length === 0) {
     return { ok: false, errors: [`${date}に診断済みレースが1件もない(診断バッチが落ちた?)`], warnings };
   }
-  if (diagnosed.length < MIN_DIAGNOSED_RACES) {
+  if (targets.length > 0 && diagnosed.length / targets.length < MIN_DIAGNOSED_RATIO) {
     errors.push(
-      `診断済みが${diagnosed.length}件しかない(全${all.length}件、通常は30件前後)。診断バッチが途中で落ちた可能性`
+      `診断できたのが対象${targets.length}件中${diagnosed.length}件だけ(全${all.length}件)。診断バッチが途中で落ちた可能性`
     );
   }
 
