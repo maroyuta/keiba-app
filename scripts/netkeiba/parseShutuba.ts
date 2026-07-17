@@ -196,8 +196,22 @@ export function parseShutubaHtml(html: string, raceId: string): ParsedShutuba | 
     .map((row) => parseHorseRow($, row))
     .filter((horse): horse is ParsedShutubaHorse => horse !== null);
 
+  // netkeibaのshutuba.htmlは同じ馬IDのHorseList行が稀に重複して載ることがある
+  // (実データで確認: 馬名・馬番が空の"幽霊行"が1頭分紛れ込むケース、2026-07-18)。
+  // 重複IDは名前が埋まっている方(実データ)を優先して1件に潰す。ensureHorsesの
+  // upsertは同一バッチ内に同じ conflict key が複数あるとPostgresが
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time" で
+  // 丸ごと失敗するため、ここで防ぐ必要がある。
+  const dedupedById = new Map<string, ParsedShutubaHorse>();
+  for (const horse of horses) {
+    const existing = dedupedById.get(horse.netkeibaHorseId);
+    if (!existing || (!existing.horseName && horse.horseName)) {
+      dedupedById.set(horse.netkeibaHorseId, horse);
+    }
+  }
+
   return {
     meta: parseMeta($, html, raceId),
-    horses,
+    horses: [...dedupedById.values()],
   };
 }
