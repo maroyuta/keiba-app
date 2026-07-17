@@ -76,19 +76,34 @@ function parseJsonResponse<T>(text: string): T {
 
 // 一次スクリーニング (Haiku 4.5): 全レースをS〜Cで評価する軽量コール。
 // Haiku 4.5はeffort/adaptive thinking非対応のため素の呼び出しにする。
+//
+// ⚠️2026-07-18、実運用のバッチ実行で稀に(35件中2件)Haikuが不正なJSON
+// (文字列が途中で切れる等)を返し、その回のレース診断だけ丸ごと落ちる事象を確認した。
+// max_tokensに対して十分小さい出力(150トークン程度)でも起きるため切り詰めではなく
+// モデル側のフォーマット崩れと判断し、パース失敗時は1回だけ素直に再試行する。
 export async function screenRace(
   input: RaceDiagnosisInput,
 ): Promise<{ result: ScreeningResult; usage: UsageInfo }> {
-  const message = await anthropic.messages.create({
-    model: CLAUDE_MODELS.screening,
-    max_tokens: 1024,
-    system: SCREENING_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildScreeningPayload(input) }],
-  });
-  return {
-    result: parseJsonResponse<ScreeningResult>(extractText(message)),
-    usage: buildUsageInfo(CLAUDE_MODELS.screening, message.usage),
-  };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const message = await anthropic.messages.create({
+      model: CLAUDE_MODELS.screening,
+      max_tokens: 1024,
+      system: SCREENING_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildScreeningPayload(input) }],
+    });
+    try {
+      return {
+        result: parseJsonResponse<ScreeningResult>(extractText(message)),
+        usage: buildUsageInfo(CLAUDE_MODELS.screening, message.usage),
+      };
+    } catch (err) {
+      lastError = err;
+      buildUsageInfo(CLAUDE_MODELS.screening, message.usage); // 失敗した回もコストは実際にかかっているので記録する
+      console.warn(`[screenRace] JSONパース失敗(${attempt + 1}回目)、リトライします:`, err);
+    }
+  }
+  throw lastError;
 }
 
 // 標準診断表生成 (Sonnet 5): 通常レースの診断表 (枠・馬番・ランク・全体分析など)。
