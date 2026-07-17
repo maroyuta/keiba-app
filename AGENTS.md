@@ -16,6 +16,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `runPayouts.ts`に`--allow-today`追加(土日夕方の当日結果報告用: payouts同期→`python3 scripts/compute_recommendation_results.py --env-file .env.local`→`sns:pack --mode results`のMac単独フロー)
 - アカウント名「AI競馬アナリスト」(`src/lib/sns/theme.ts`の`SNS_BRAND`で一元管理)。既存X垢(2,500)とTikTok垢(8,000)を転用する方針
 
+## 📈 0→1の売れ方の調査 (2026-07-17)
+
+`docs/sns-growth-research.md`。**最重要の発見: フォロワー数と売上はほぼ無関係**(13人で初売上/6,000人で5部、購入者の大多数はフォロワー以外。ただし発信者が"noteの売り方"を売る側=生存者バイアスありと明記)。noteの購入率は平均2〜3%。**この調査を受けてstrategy.mdの有料化ゲートから「フォロワー1,000〜」を撤回した**(実績ゲートn≥50・ROI>100%は信頼の条件なので維持)。実売規模はM&A開示で競艇note月8万・競馬note総売上38万。**失敗実例(300円×3部=時給30円)の敗因が「手作業の予想がAIに勝てない」であり、うちはその勝った側のポジションにいる**。集客の初期は大手垢リプ欄への「コバンザメ戦略」(リプでimp13.5〜75倍)。価格は300円だと安さが逆効果、500〜900円寄り。
+
 ## 🤖 SNS完全自動化を実装 (2026-07-17) ★ここが最新
 
 ユーザーが「最大限まで自動化」を選択(X投稿まで全自動)。手順書は`docs/sns-automation.md`が正。
