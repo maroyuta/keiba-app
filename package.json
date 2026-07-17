@@ -16,7 +16,8 @@
     "sync:netkeiba:historical": "tsx scripts/netkeiba/runHistoricalRaces.ts",
     "diagnose:upcoming": "tsx scripts/diagnoseUpcoming.ts",
     "sns:pack": "tsx scripts/sns/buildContentPack.ts",
-    "sns:video": "tsx scripts/sns/makeVideo.ts"
+    "sns:video": "tsx scripts/sns/makeVideo.ts",
+    "sns:auto": "tsx scripts/sns/autoPost.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
@@ -25,7 +26,8 @@
     "cheerio": "^1.2.0",
     "next": "16.2.10",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "twitter-api-v2": "^1.29.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

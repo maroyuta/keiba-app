@@ -16,7 +16,22 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `runPayouts.ts`に`--allow-today`追加(土日夕方の当日結果報告用: payouts同期→`python3 scripts/compute_recommendation_results.py --env-file .env.local`→`sns:pack --mode results`のMac単独フロー)
 - アカウント名「AI競馬アナリスト」(`src/lib/sns/theme.ts`の`SNS_BRAND`で一元管理)。既存X垢(2,500)とTikTok垢(8,000)を転用する方針
 
-**残タスク:** ユーザー側の手作業(改名・投稿、7/20週から。チェックリストはstrategy§5)。X Premium加入判断は保留。ヘッダー画像(1500x500)の専用ルートは未実装(digest-og.pngのトリミングで代用)。
+## 🤖 SNS完全自動化を実装 (2026-07-17) ★ここが最新
+
+ユーザーが「最大限まで自動化」を選択(X投稿まで全自動)。手順書は`docs/sns-automation.md`が正。
+
+**自動フロー(全てlaunchd登録済み・JST):** 毎日19:00枠順取り込み → 金土22:00 診断(LLM)+**「あすの診断」投稿**(投稿は診断スクリプト末尾に連結。時刻ベースの別ジョブにすると診断が長引いた際に中途半端なデータで投稿するため意図的にチェーン化) → 土日7:30**「きょうの狙い」投稿** → 土日17:30 配当同期+ROI集計+**「結果」を朝の投稿の引用RTで投稿**。
+
+**実装:** `src/lib/sns/render.ts`(データ取得+描画をlibに集約、API Routeとバッチが共用。**dev server非依存**=`next/og`のImageResponseはtsxからスタンドアロンで動くことを検証済み)、`validate.ts`(**投稿前の門番**: 診断0件/8件未満・買い目0件・**オッズ充足率80%未満**・結果0件で投稿中止+通知。07-11のodds全馬0事故が全自動だと公開投稿になるため必須)、`compose.ts`(140字に収まるまで狙い行を自動で削る)、`xClient.ts`(OAuth1.0a、**X_*env未設定なら自動dry-run**、v2.uploadMedia優先+v1.1フォールバック)、`scripts/sns/autoPost.ts`(司令塔)、`run_sns_post.sh`/`run_sns_results.sh`。`sns-out/posted.json`にツイートIDを記録し引用RTに使う。
+
+**⚠️ユーザー側の残作業3つ(未完了、これが済むまで投稿はdry-runのみ):**
+1. **MacのTZがAsia/Ho_Chi_Minh(+07)になっている** → `sudo systemsetup -settimezone Asia/Tokyo`が必要(sudoのためAI実行不可)。**launchdの発火時刻はシステムTZで解釈されるため2時間ズレ、朝の投稿が09:30 JST=1R発走5分前になる**。7/16までのpipeline_runsは10:00 UTC=JST19:00で記録されており、最近TZが変わったと判明。シェル側の日付計算は`export TZ=Asia/Tokyo`で固定済み+TZ不一致時は警告を出す
+2. `sudo pmset repeat wakeorpoweron ...`(スリープ中はlaunchdが実行も後追いもしない)
+3. **X API鍵(X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_SECRET)を`.env.local`へ** → 追加した瞬間に自動投稿が始まる。X APIは2026年2月に無料枠廃止・従量課金($0.015/投稿≒月$1)。App権限をRead and writeに変更後、**Access Tokenの再生成が必要**
+
+**TikTokは自動投稿不可**(未監査アプリはSELF_ONLY強制)。動画生成までは自動、投稿は手動。
+
+**残タスク:** アカウント改名等のユーザー手作業(launch-assets §2)、X Premium加入判断は保留。ヘッダー画像(1500x500)の専用ルートは未実装(digest-og.pngのトリミングで代用)。
 
 ## 🔄 セッション引き継ぎメモ (2026-07-14朝、コンテキスト逼迫のため新規会話へ移行) ★最新・ここから読む
 
