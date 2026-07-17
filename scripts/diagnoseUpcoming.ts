@@ -18,6 +18,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Supabase-jsの.in()は200件超のIDを渡すと結果が静かにtruncateされることがある実例に
+// 遭遇している(AGENTS.md参照、232件渡して37件しか処理されなかったケース)。
+// 大量IDのクエリは必ずこのヘルパーでチャンク分割すること。
+const SUPABASE_IN_CHUNK_SIZE = 200;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 async function main() {
   const args = loadEnvFileFromArgs(process.argv.slice(2));
   const dateIdx = args.indexOf("--date");
@@ -69,15 +82,18 @@ async function main() {
   const horseIds = [...new Set((entries ?? []).map((e) => e.horse_id))];
   let horsesWithHistory = 0;
   if (horseIds.length > 0) {
-    const { data: pastPerf, error: pastError } = await supabase
-      .from("past_performances")
-      .select("horse_id")
-      .in("horse_id", horseIds)
-      .lt("race_date", date);
-    if (pastError) {
-      throw new Error(`past_performances取得に失敗: ${pastError.message}`);
+    const horsesWithHistorySet = new Set<string>();
+    for (const idChunk of chunk(horseIds, SUPABASE_IN_CHUNK_SIZE)) {
+      const { data: pastPerf, error: pastError } = await supabase
+        .from("past_performances")
+        .select("horse_id")
+        .in("horse_id", idChunk)
+        .lt("race_date", date);
+      if (pastError) {
+        throw new Error(`past_performances取得に失敗: ${pastError.message}`);
+      }
+      for (const p of pastPerf ?? []) horsesWithHistorySet.add(p.horse_id);
     }
-    const horsesWithHistorySet = new Set((pastPerf ?? []).map((p) => p.horse_id));
     horsesWithHistory = horsesWithHistorySet.size;
   }
   const sufficiencyRatio = horseIds.length > 0 ? horsesWithHistory / horseIds.length : 0;
