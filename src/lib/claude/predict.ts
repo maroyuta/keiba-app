@@ -126,6 +126,9 @@ export async function diagnoseRaceStandard(
 }
 
 // 重要レース診断 (Opus 4.8): race_rankがA/Sだったレースのみ、血統・調教まで含めたフル診断。
+// ⚠️2026-07-18、effort:"xhigh"がVercel Hobbyプランの300秒上限(引き上げ不可、実機で確認済み)を
+// 超えるケースが出た(マリーンS戦で300秒超過タイムアウト)。過去走・血統データが厚くなった分
+// 処理時間も伸びたと見られる。"high"に落として時間内に収める(standardと同じeffort)。
 export async function diagnoseRacePremium(
   input: RaceDiagnosisInput,
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
@@ -133,7 +136,7 @@ export async function diagnoseRacePremium(
     model: CLAUDE_MODELS.premium,
     max_tokens: 32000,
     thinking: { type: "adaptive" },
-    output_config: { effort: "xhigh" },
+    output_config: { effort: "high" },
     system: PREMIUM_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildRaceDataPayload(input) }],
   });
