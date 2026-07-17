@@ -9,7 +9,11 @@ import type { RaceRow, UsageLogTier } from "@/lib/supabase/database.types";
 // Vercel Hobbyプランはmaxduraiton上限が60秒で固定 (この値を超えて指定しても60秒でハードタイムアウトする)。
 // premium診断はHobbyプランでは確実にタイムアウトするため、Proプラン(300秒、Fluid Computeで800秒まで
 // 延長可)への切り替えが実質必須。詳細はAGENTS.mdの「開発ステータス」を参照。
-export const maxDuration = 300;
+// premium(Opus、xhigh effort)は過去走・血統データが厚くなった影響か実測で300秒を
+// 超えるケースが出てきた(2026-07-18、マリーンS戦で"Task timed out after 300 seconds")。
+// Fluid Compute有効時は800秒まで延長できるため引き上げる(要Vercelダッシュボード側の
+// Fluid Compute有効化、無効な場合はプラン上限で頭打ちになるだけで実害はない)。
+export const maxDuration = 800;
 
 type SupabaseAdminClient = ReturnType<typeof createAdminClient>;
 
