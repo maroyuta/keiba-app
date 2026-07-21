@@ -18,6 +18,7 @@ export type PreviewData = {
     race_number: number;
     honmei_horse_number: number | null;
     aite_horse_number: number | null;
+    aite_horse_number_2: number | null;
     race_rank: string | null;
   }[];
   venues: string[];
@@ -28,7 +29,7 @@ export type PreviewData = {
 export async function loadPreviewData(supabase: Db, date: string): Promise<PreviewData> {
   const { data } = await supabase
     .from("races")
-    .select("keibajo_name, race_number, race_rank, honmei_horse_number, aite_horse_number")
+    .select("keibajo_name, race_number, race_rank, honmei_horse_number, aite_horse_number, aite_horse_number_2")
     .eq("race_date", date)
     .not("race_rank", "is", null);
 
@@ -54,7 +55,8 @@ export async function loadPreviewData(supabase: Db, date: string): Promise<Previ
 function buyLabel(b: PreviewData["buys"][number]): string {
   return (
     `${b.keibajo_name}${b.race_number}R ◎${b.honmei_horse_number}` +
-    (b.aite_horse_number ? `→${b.aite_horse_number}` : "")
+    (b.aite_horse_number ? `→${b.aite_horse_number}` : "") +
+    (b.aite_horse_number_2 ? `・${b.aite_horse_number_2}` : "")
   );
 }
 

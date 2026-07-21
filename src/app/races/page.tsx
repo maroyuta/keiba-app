@@ -21,6 +21,7 @@ type Race = {
   track_condition: string | null;
   entry_count: number | null;
   race_rank: string | null;
+  premium_diagnosed_at: string | null;
 };
 
 function formatPostTime(postTime: string | null): string {
@@ -46,6 +47,10 @@ async function findAdjacentDate(
   return data?.[0]?.race_date ?? null;
 }
 
+// 他の競馬サイト(netkeiba等)の並びに合わせるための開催場の表示順。
+// ここに無い開催場コードは末尾にkeibajo_code昇順で並ぶ。
+const VENUE_DISPLAY_ORDER = ["03", "10", "02"]; // 福島, 小倉, 函館
+
 function groupByVenue(rows: Race[]): Race[][] {
   const venueGroups = new Map<string, Race[]>();
   for (const race of rows) {
@@ -53,7 +58,16 @@ function groupByVenue(rows: Race[]): Race[][] {
     if (!venueGroups.has(key)) venueGroups.set(key, []);
     venueGroups.get(key)!.push(race);
   }
-  return [...venueGroups.values()];
+  return [...venueGroups.values()].sort((a, b) => {
+    const codeA = a[0].keibajo_code;
+    const codeB = b[0].keibajo_code;
+    const rankA = VENUE_DISPLAY_ORDER.indexOf(codeA);
+    const rankB = VENUE_DISPLAY_ORDER.indexOf(codeB);
+    if (rankA !== -1 || rankB !== -1) {
+      return (rankA === -1 ? 999 : rankA) - (rankB === -1 ? 999 : rankB);
+    }
+    return codeA.localeCompare(codeB);
+  });
 }
 
 // レースを開催場(x軸)×レース番号1-12(y軸)のグリッドで俯瞰する。
@@ -87,7 +101,15 @@ function RaceCell({ race }: { race: Race | undefined }) {
         ) : (
           <span />
         )}
-        <RankBadge rank={race.race_rank as RaceRank | null} />
+        <div className="flex items-center gap-1">
+          {race.premium_diagnosed_at && (
+            <span
+              title="本気診断済"
+              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"
+            />
+          )}
+          <RankBadge rank={race.race_rank as RaceRank | null} />
+        </div>
       </div>
       <span className="truncate text-[11px] leading-tight font-medium text-[#f2efe6]">
         {race.race_name || race.race_class || "—"}
@@ -151,6 +173,10 @@ function DateGrid({ dateRows }: { dateRows: Race[] }) {
           <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f2efe6]/15" />
           C(screening除外)
         </span>
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-red-500" />
+          本気診断済
+        </span>
       </div>
     </div>
   );
@@ -172,7 +198,7 @@ export default async function RacesPage({
     const { data: upcoming } = await supabase
       .from("races")
       .select(
-        "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank",
+        "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank, premium_diagnosed_at",
       )
       .gte("race_date", today)
       .order("race_date", { ascending: true })
@@ -194,7 +220,7 @@ export default async function RacesPage({
         const { data: fallback } = await supabase
           .from("races")
           .select(
-            "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank",
+            "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank, premium_diagnosed_at",
           )
           .eq("race_date", latest.race_date)
           .order("keibajo_code", { ascending: true })
@@ -253,7 +279,7 @@ export default async function RacesPage({
   const { data: races } = await supabase
     .from("races")
     .select(
-      "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank",
+      "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank, premium_diagnosed_at",
     )
     .eq("race_date", targetDate)
     .order("keibajo_code", { ascending: true })

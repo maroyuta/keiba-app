@@ -128,7 +128,20 @@ export async function diagnoseRaceStandard(
 // 重要レース診断 (Opus 4.8): race_rankがA/Sだったレースのみ、血統・調教まで含めたフル診断。
 // ⚠️2026-07-18、effort:"xhigh"がVercel Hobbyプランの300秒上限(引き上げ不可、実機で確認済み)を
 // 超えるケースが出た(マリーンS戦で300秒超過タイムアウト)。過去走・血統データが厚くなった分
-// 処理時間も伸びたと見られる。"high"に落として時間内に収める(standardと同じeffort)。
+// 処理時間も伸びたと見られる。
+//
+// effortは環境変数`PREMIUM_EFFORT`で切り替える(2026-07-18)。
+//   - 未設定(=Vercel本番のデフォルト): "high"。300秒上限に確実に収める。スマホからボタン1つで
+//     完結する経路を壊さないため。
+//   - ローカルの`.env.local`で"xhigh": Mac上で`next dev`/`next start`を叩く経路には
+//     maxDurationの制約が効かないため、Opusを全力(xhigh)で回せる。実際に金を張る数レースだけを
+//     `npm run diagnose:premium`で全力診断する用途。バックテストで200〜400秒の完走実績あり。
+// これにより「本気診断=Vercelの300秒に縛られてhighへ格下げ」という制約を、インフラ費0のまま
+// ローカル経路でだけxhighに戻せる。
+function premiumEffort(): "high" | "xhigh" {
+  return process.env.PREMIUM_EFFORT === "xhigh" ? "xhigh" : "high";
+}
+
 export async function diagnoseRacePremium(
   input: RaceDiagnosisInput,
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
@@ -136,7 +149,7 @@ export async function diagnoseRacePremium(
     model: CLAUDE_MODELS.premium,
     max_tokens: 32000,
     thinking: { type: "adaptive" },
-    output_config: { effort: "high" },
+    output_config: { effort: premiumEffort() },
     system: PREMIUM_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildRaceDataPayload(input) }],
   });

@@ -2,8 +2,9 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RaceRank, BetType } from "@/lib/supabase/database.types";
 import { RankBadge } from "../RankBadge";
-import { WakuBadge } from "../WakuBadge";
 import { DiagnoseButton } from "./DiagnoseButton";
+import { EntriesList } from "./EntriesList";
+import { ReviewCheckbox } from "./ReviewCheckbox";
 
 const BET_TYPE_LABELS: Record<BetType, string> = {
   wide: "ワイド",
@@ -17,10 +18,6 @@ const RANK_LEGEND: { rank: RaceRank; label: string }[] = [
   { rank: "B", label: "押さえ" },
   { rank: "C", label: "軽視〜消し" },
 ];
-
-function formatOdds(odds: number | null): string {
-  return odds === null ? "—" : odds.toFixed(1);
-}
 
 export default async function RaceDiagnosisPage({
   params,
@@ -47,7 +44,6 @@ export default async function RaceDiagnosisPage({
     { label: "レース全体のレベル・層の厚さ", text: race.analysis_level },
     { label: "本命が堅い/危ない理由", text: race.analysis_favorite },
     { label: "相手の根拠", text: race.analysis_rival },
-    { label: "妙味馬が出る理由", text: race.analysis_value },
     { label: "ペース・展開想定", text: race.analysis_pace },
   ].filter((item) => item.text);
 
@@ -71,6 +67,26 @@ export default async function RaceDiagnosisPage({
           {race.bet_amount_wide && race.bet_amount_umaren && " / "}
           {race.bet_amount_umaren && `馬連 ${race.bet_amount_umaren.toLocaleString()}円`}
         </p>
+      )}
+      {race.aite_horse_number_2 && (
+        <>
+          <p className="mt-3 font-mono text-xl font-bold text-[#f2efe6]">
+            {race.honmei_horse_number}
+            <span className="text-[#ff9f1c]"> → {race.aite_horse_number_2}</span>
+            {race.bet_type && (
+              <span className="ml-2 font-sans text-sm font-normal text-[#f2efe6]/50">
+                ({BET_TYPE_LABELS[race.bet_type as BetType]})
+              </span>
+            )}
+          </p>
+          {(race.bet_amount_wide_2 || race.bet_amount_umaren_2) && (
+            <p className="mt-1 text-sm text-[#f2efe6]/70">
+              {race.bet_amount_wide_2 && `ワイド ${race.bet_amount_wide_2.toLocaleString()}円`}
+              {race.bet_amount_wide_2 && race.bet_amount_umaren_2 && " / "}
+              {race.bet_amount_umaren_2 && `馬連 ${race.bet_amount_umaren_2.toLocaleString()}円`}
+            </p>
+          )}
+        </>
       )}
     </section>
   );
@@ -150,78 +166,20 @@ export default async function RaceDiagnosisPage({
             raceRank={race.race_rank as RaceRank | null}
             raceClass={race.race_class}
             raceGrade={race.grade}
+            premiumDiagnosedAt={race.premium_diagnosed_at}
           />
+
+          <ReviewCheckbox raceId={race.id} initialReviewedAt={race.reviewed_at} />
         </header>
 
         {buySection}
 
-        <section className="flex flex-col gap-2">
-          {sortedEntries.map((entry) => {
-            const isHonmei = entry.horse_number === race.honmei_horse_number;
-            const isAite = entry.horse_number === race.aite_horse_number;
-            const isDangerFavorite =
-              entry.expected_popularity !== null &&
-              entry.expected_popularity <= 5 &&
-              (entry.horse_rank === "B" || entry.horse_rank === "C");
-
-            return (
-              <div
-                key={entry.id}
-                className={`flex items-start gap-3 rounded-xl border p-3 ${
-                  isHonmei
-                    ? "border-[#ff9f1c]/60 bg-[#ff9f1c]/10 ring-1 ring-[#ff9f1c]/30"
-                    : isAite
-                      ? "border-teal-400/50 bg-teal-400/10 ring-1 ring-teal-400/25"
-                      : "border-[#f2efe6]/10 bg-[#12241f]"
-                } ${entry.is_kesshi ? "opacity-45" : ""}`}
-              >
-                <WakuBadge waku={entry.post_position} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-baseline gap-x-2">
-                    <span className="font-mono text-xs text-[#f2efe6]/45">
-                      {entry.horse_number}番
-                    </span>
-                    <span className="truncate font-bold text-[#f2efe6]">
-                      {entry.horses.horse_name}
-                    </span>
-                    {isHonmei && (
-                      <span className="rounded bg-[#ff9f1c] px-1 text-xs font-bold text-[#0b1a17]">
-                        本命
-                      </span>
-                    )}
-                    {isAite && (
-                      <span className="rounded bg-teal-400 px-1 text-xs font-bold text-[#0b1a17]">
-                        相手
-                      </span>
-                    )}
-                    {entry.is_kesshi && (
-                      <span className="rounded bg-red-500/20 px-1 text-xs font-medium text-red-400">
-                        消
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 font-mono text-xs text-[#ff9f1c]">
-                    <span>
-                      {entry.expected_popularity ? `${entry.expected_popularity}人気` : "—"}
-                      {entry.odds_win !== null && ` (${formatOdds(entry.odds_win)}倍)`}
-                    </span>
-                    {isDangerFavorite && (
-                      <span className="rounded bg-red-500/20 px-1 font-sans text-[10px] font-medium text-red-400">
-                        危険な人気馬
-                      </span>
-                    )}
-                  </div>
-                  {entry.horse_rank_comment && (
-                    <p className="mt-1 text-sm leading-snug text-[#f2efe6]/70">
-                      {entry.horse_rank_comment}
-                    </p>
-                  )}
-                </div>
-                <RankBadge rank={entry.horse_rank as RaceRank | null} />
-              </div>
-            );
-          })}
-        </section>
+        <EntriesList
+          entries={sortedEntries}
+          honmeiHorseNumber={race.honmei_horse_number}
+          aiteHorseNumber={race.aite_horse_number}
+          aiteHorseNumber2={race.aite_horse_number_2}
+        />
 
         {analysisItems.length > 0 && (
           <section className="flex flex-col gap-2">

@@ -9,12 +9,14 @@ export function DiagnoseButton({
   raceRank,
   raceClass,
   raceGrade,
+  premiumDiagnosedAt,
 }: {
   raceId: string;
   hasResult: boolean;
   raceRank: "S" | "A" | "B" | "C" | null;
   raceClass: string | null;
   raceGrade: string | null;
+  premiumDiagnosedAt: string | null;
 }) {
   const router = useRouter();
   // 重賞はrace_rankによらず本気診断の対象にする(route.tsの重賞バイパスと揃える。
@@ -70,6 +72,20 @@ export function DiagnoseButton({
           </button>
         )}
       </div>
+      {isPremiumEligible && premiumDiagnosedAt && (
+        <p className="flex items-center justify-center gap-1.5 text-xs text-[#f2efe6]/60">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" />
+          本気診断済(
+          {new Date(premiumDiagnosedAt).toLocaleString("ja-JP", {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "Asia/Tokyo",
+          })}
+          )
+        </p>
+      )}
       {errorMessage && <p className="text-center text-sm text-red-400">{errorMessage}</p>}
     </div>
   );

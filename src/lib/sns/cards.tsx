@@ -22,6 +22,7 @@ export type CardRace = {
   race_rank_reason: string | null;
   honmei_horse_number: number | null;
   aite_horse_number: number | null;
+  aite_horse_number_2: number | null;
   bet_type: string | null;
 };
 
@@ -44,6 +45,7 @@ export type DigestRow = {
   race_rank: string | null;
   honmei_horse_number: number | null;
   aite_horse_number: number | null;
+  aite_horse_number_2: number | null;
 };
 
 export type ResultRow = {
@@ -268,11 +270,14 @@ function EntryRow({
   fontScale: number;
 }) {
   const isHonmei = entry.horse_number === race.honmei_horse_number;
-  const isAite = entry.horse_number === race.aite_horse_number;
-  const isDanger =
-    entry.expected_popularity !== null &&
-    entry.expected_popularity <= 5 &&
-    (entry.horse_rank === "B" || entry.horse_rank === "C");
+  const isAite =
+    entry.horse_number === race.aite_horse_number || entry.horse_number === race.aite_horse_number_2;
+  const aiteLabel =
+    entry.horse_number === race.aite_horse_number
+      ? race.aite_horse_number_2
+        ? "相手1"
+        : "相手"
+      : "相手2";
   const border = isHonmei
     ? `1px solid ${C.orangeLine}`
     : isAite
@@ -291,7 +296,6 @@ function EntryRow({
         borderRadius: 10,
         border,
         backgroundColor: bg,
-        opacity: entry.is_kesshi ? 0.45 : 1,
       }}
     >
       <WakuChip waku={entry.post_position} size={26 * fontScale} />
@@ -317,11 +321,7 @@ function EntryRow({
         {truncate(entry.horse_name, 9)}
       </div>
       {isHonmei && <Tag label="本命" bg={C.orange} fg={C.bg} fontSize={13 * fontScale} />}
-      {isAite && <Tag label="相手" bg={C.teal} fg={C.bg} fontSize={13 * fontScale} />}
-      {entry.is_kesshi && <Tag label="消" bg={C.redSoft} fg={C.red} fontSize={13 * fontScale} />}
-      {isDanger && !entry.is_kesshi && (
-        <Tag label="危険な人気馬" bg={C.redSoft} fg={C.red} fontSize={12 * fontScale} />
-      )}
+      {isAite && <Tag label={aiteLabel} bg={C.teal} fg={C.bg} fontSize={13 * fontScale} />}
       <div
         style={{
           display: "flex",
@@ -382,6 +382,7 @@ function BuyPanel({ race, scale }: { race: CardRace; scale: number }) {
         {race.aite_horse_number && (
           <div style={{ display: "flex", fontSize: 30 * scale, fontWeight: 700, color: C.orange }}>
             → {race.aite_horse_number}
+            {race.aite_horse_number_2 ? `・${race.aite_horse_number_2}` : ""}
           </div>
         )}
         {race.bet_type && (
@@ -603,6 +604,7 @@ function DigestRowItem({
         <div style={{ display: "flex", fontSize: 16 * fontScale, fontWeight: 700, color: C.orange }}>
           ◎{row.honmei_horse_number}
           {row.aite_horse_number ? ` → ${row.aite_horse_number}` : ""}
+          {row.aite_horse_number_2 ? `・${row.aite_horse_number_2}` : ""}
         </div>
       )}
       {hasBuy ? (

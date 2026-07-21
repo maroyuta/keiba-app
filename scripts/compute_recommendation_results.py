@@ -120,28 +120,44 @@ def compute_leg(payouts_by_key: dict, bet_type: str, combo: str, stake_yen: "int
     return {"stake_yen": stake_yen, "return_yen": return_yen}
 
 
+def legs_for_combo(payouts_by_key: dict, bet_type: str, honmei: int, aite: "int | None",
+                    wide_amount: "int | None", umaren_amount: "int | None") -> list:
+    """本命×相手1組の legs (wide/umaren) を計算する。aiteがNoneならこの組み合わせ自体が無い。"""
+    if aite is None:
+        return []
+    combo = combo_key(honmei, aite)
+    legs = []
+    if bet_type in ("wide", "both"):
+        leg = compute_leg(payouts_by_key, "wide", combo, wide_amount)
+        if leg:
+            legs.append(leg)
+    if bet_type in ("umaren", "both"):
+        leg = compute_leg(payouts_by_key, "umaren", combo, umaren_amount)
+        if leg:
+            legs.append(leg)
+    return legs
+
+
 def build_result_row(race: dict, payouts: list) -> "dict | None":
     honmei = race.get("honmei_horse_number")
     aite = race.get("aite_horse_number")
+    aite2 = race.get("aite_horse_number_2")
     bet_type = race.get("bet_type")
     if honmei is None or aite is None or not bet_type:
         return None
 
-    combo = combo_key(honmei, aite)
     payouts_by_key = {(p["bet_type"], p["combination"]): p for p in payouts}
 
-    legs = []
-    if bet_type in ("wide", "both"):
-        leg = compute_leg(payouts_by_key, "wide", combo, race.get("bet_amount_wide"))
-        if leg:
-            legs.append(leg)
-    if bet_type in ("umaren", "both"):
-        leg = compute_leg(payouts_by_key, "umaren", combo, race.get("bet_amount_umaren"))
-        if leg:
-            legs.append(leg)
+    # 相手1・相手2(あれば)、それぞれの組み合わせのlegsを合算する(2026-07-21、相手2頭化対応)。
+    legs = legs_for_combo(
+        payouts_by_key, bet_type, honmei, aite, race.get("bet_amount_wide"), race.get("bet_amount_umaren")
+    )
+    legs += legs_for_combo(
+        payouts_by_key, bet_type, honmei, aite2, race.get("bet_amount_wide_2"), race.get("bet_amount_umaren_2")
+    )
 
     if not legs:
-        # bet_typeはあるがbet_amount_*が両方とも未設定/0 -> 賭けていないので集計対象外
+        # bet_typeはあるがbet_amount_*が全て未設定/0 -> 賭けていないので集計対象外
         return None
 
     stake_yen = sum(leg["stake_yen"] for leg in legs)
@@ -152,6 +168,7 @@ def build_result_row(race: dict, payouts: list) -> "dict | None":
         "bet_type": bet_type,
         "honmei_horse_number": honmei,
         "aite_horse_number": aite,
+        "aite_horse_number_2": aite2,
         "stake_yen": stake_yen,
         "is_hit": return_yen > 0,
         "return_yen": return_yen,
@@ -243,7 +260,7 @@ def main() -> None:
             "races",
             {
                 "honmei_horse_number": "not.is.null",
-                "select": "id,honmei_horse_number,aite_horse_number,bet_type,bet_amount_wide,bet_amount_umaren,race_rank",
+                "select": "id,honmei_horse_number,aite_horse_number,aite_horse_number_2,bet_type,bet_amount_wide,bet_amount_umaren,bet_amount_wide_2,bet_amount_umaren_2,race_rank",
             },
         )
         print(f"[読み込み] honmei_horse_number設定済みのrace={len(races)}件", file=sys.stderr)

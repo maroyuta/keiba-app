@@ -4,6 +4,7 @@ import { screenRace, diagnoseRaceStandard, diagnoseRacePremium } from "@/lib/cla
 import type { UsageInfo } from "@/lib/claude/predict";
 import type { RaceDiagnosisInput, DiagnosisResult, BiasReferenceRace } from "@/lib/claude/prompts";
 import type { RaceRow, UsageLogTier } from "@/lib/supabase/database.types";
+import { capDailySRank, capDailyBuyCandidates } from "@/lib/rank/capDailySRank";
 
 // Sonnet(standard)は数十秒、Opus(premium, xhigh effort)は実測で約200秒かかることを確認済み。
 // Vercel Hobbyプランはmaxduraiton上限が60秒で固定 (この値を超えて指定しても60秒でハードタイムアウトする)。
@@ -11,7 +12,12 @@ import type { RaceRow, UsageLogTier } from "@/lib/supabase/database.types";
 // 延長可)への切り替えが実質必須。詳細はAGENTS.mdの「開発ステータス」を参照。
 // ⚠️Hobbyプランはmax 300で固定(800等を指定するとデプロイ自体が失敗することを実機で確認済み、
 // 2026-07-18)。Proプランへの切り替えはユーザー判断の有料変更のためコード側では行わない。
-// premiumのeffortを下げて300秒に収める方針にした(diagnoseRacePremiumのeffort調整とセット)。
+// Vercel経由(このルート)のpremiumは effort=high に固定して300秒に収める。
+//
+// 「本気診断の全力(xhigh)」は Vercel ではなくローカル経路で回す(2026-07-18、方針A)。
+// Mac上で `next dev`/`next start` を叩く経路には maxDuration の制約が効かないため、
+// `.env.local` に PREMIUM_EFFORT=xhigh を入れて `npm run diagnose:premium -- --race <id>`
+// (scripts/diagnosePremium.ts)で全力診断できる。effort切替は predict.ts の premiumEffort() 参照。
 export const maxDuration = 300;
 
 type SupabaseAdminClient = ReturnType<typeof createAdminClient>;
@@ -55,20 +61,52 @@ function enforcePopularityGuard(
   input: RaceDiagnosisInput,
   result: DiagnosisResult,
 ): DiagnosisResult {
-  if (result.honmei_horse_number === null || result.aite_horse_number === null) {
-    return result;
-  }
   const oddsRankMap = buildOddsRankMap(input);
-  const honmeiPop = resolvePopularity(result.honmei_horse_number, input, oddsRankMap);
-  const aitePop = resolvePopularity(result.aite_horse_number, input, oddsRankMap);
-
+  let updated = result;
   const violations: string[] = [];
-  if (honmeiPop === null || honmeiPop > MAX_BET_POPULARITY) {
-    violations.push(`本命${result.honmei_horse_number}番(推定${honmeiPop ?? "不明"}人気)`);
+
+  // 本命×相手1のどちらかが想定人気範囲外なら、この組み合わせ自体を丸ごと見送りにする
+  // (相手2も本命が前提の買い目のため、本命が無効なら道連れでnullにする)。
+  if (updated.honmei_horse_number !== null && updated.aite_horse_number !== null) {
+    const honmeiPop = resolvePopularity(updated.honmei_horse_number, input, oddsRankMap);
+    const aitePop = resolvePopularity(updated.aite_horse_number, input, oddsRankMap);
+    const primaryViolations: string[] = [];
+    if (honmeiPop === null || honmeiPop > MAX_BET_POPULARITY) {
+      primaryViolations.push(`本命${updated.honmei_horse_number}番(推定${honmeiPop ?? "不明"}人気)`);
+    }
+    if (aitePop === null || aitePop > MAX_BET_POPULARITY) {
+      primaryViolations.push(`相手${updated.aite_horse_number}番(推定${aitePop ?? "不明"}人気)`);
+    }
+    if (primaryViolations.length > 0) {
+      violations.push(...primaryViolations);
+      updated = {
+        ...updated,
+        honmei_horse_number: null,
+        aite_horse_number: null,
+        aite_horse_number_2: null,
+        bet_type: null,
+        bet_amount_wide: null,
+        bet_amount_umaren: null,
+        bet_amount_wide_2: null,
+        bet_amount_umaren_2: null,
+      };
+    }
   }
-  if (aitePop === null || aitePop > MAX_BET_POPULARITY) {
-    violations.push(`相手${result.aite_horse_number}番(推定${aitePop ?? "不明"}人気)`);
+
+  // 相手2単独が人気範囲外の場合は、相手2だけをnullにする(本命×相手1はそのまま活かす)。
+  if (updated.honmei_horse_number !== null && updated.aite_horse_number_2 !== null) {
+    const aite2Pop = resolvePopularity(updated.aite_horse_number_2, input, oddsRankMap);
+    if (aite2Pop === null || aite2Pop > MAX_BET_POPULARITY) {
+      violations.push(`相手2 ${updated.aite_horse_number_2}番(推定${aite2Pop ?? "不明"}人気)`);
+      updated = {
+        ...updated,
+        aite_horse_number_2: null,
+        bet_amount_wide_2: null,
+        bet_amount_umaren_2: null,
+      };
+    }
   }
+
   if (violations.length === 0) {
     return result;
   }
@@ -77,13 +115,8 @@ function enforcePopularityGuard(
     `[popularity-guard] race honmei/aiteが想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)外のため購入を見送りに変更: ${violations.join(", ")}`,
   );
   return {
-    ...result,
-    honmei_horse_number: null,
-    aite_horse_number: null,
-    bet_type: null,
-    bet_amount_wide: null,
-    bet_amount_umaren: null,
-    race_rank_reason: `${result.race_rank_reason}\n[自動チェック] ${violations.join("、")}が想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)を超えていたため、購入を機械的に見送りへ変更した。`,
+    ...updated,
+    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${violations.join("、")}が想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)を超えていたため、購入を機械的に見送りへ変更した。`,
   };
 }
 
@@ -414,6 +447,7 @@ async function persistDiagnosis(
   input: RaceDiagnosisInput,
   rawResult: DiagnosisResult,
   biasReferenceRaceId: string | null,
+  tier: UsageLogTier,
 ): Promise<void> {
   const result = enforcePopularityGuard(input, rawResult);
   await supabase
@@ -421,13 +455,20 @@ async function persistDiagnosis(
     .update({
       race_rank: result.race_rank,
       race_rank_reason: result.race_rank_reason,
+      race_priority_score: result.race_priority_score,
+      // 「本気診断できてるか自分で判断つかない」への対応(2026-07-19)。premiumが実際に
+      // 完走・コミットされた時刻を記録し、UIの済バッジ表示に使う。
+      ...(tier === "premium" ? { premium_diagnosed_at: new Date().toISOString() } : {}),
       bias_note: result.predicted_bias,
       bias_reference_race_id: biasReferenceRaceId,
       honmei_horse_number: result.honmei_horse_number,
       aite_horse_number: result.aite_horse_number,
+      aite_horse_number_2: result.aite_horse_number_2,
       bet_type: result.bet_type,
       bet_amount_wide: result.bet_amount_wide,
       bet_amount_umaren: result.bet_amount_umaren,
+      bet_amount_wide_2: result.bet_amount_wide_2,
+      bet_amount_umaren_2: result.bet_amount_umaren_2,
       analysis_level: result.analysis_level,
       analysis_favorite: result.analysis_favorite,
       analysis_rival: result.analysis_rival,
@@ -455,6 +496,14 @@ async function persistDiagnosis(
         .eq("id", entryId);
     }),
   );
+
+  // このレースがS/Aを付けた/維持した結果、当日の件数が上限を超えていれば
+  // race_priority_score順で下位を機械的に格下げする(2026-07-19、ユーザー指示)。
+  // 先にSの上限(→A格下げ)を確定させてから、S+A合計の上限(→B格下げ)を数える。
+  if (result.race_rank === "S" || result.race_rank === "A") {
+    await capDailySRank(supabase, input.race.race_date);
+    await capDailyBuyCandidates(supabase, input.race.race_date);
+  }
 }
 
 export async function POST(
@@ -495,7 +544,7 @@ export async function POST(
     }
     const premium = await diagnoseRacePremium(input);
     await logUsage(supabase, raceId, "premium", premium.usage);
-    await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId);
+    await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId, "premium");
     return NextResponse.json({ tier: "premium", result: premium.result });
   }
 
@@ -555,10 +604,21 @@ export async function POST(
     }
   }
 
+  // 重賞(grade設定あり)は必ずOpus(premium)で診断する(2026-07-18、ユーザー指示「重賞は確定でopus」)。
+  // 最も大きい金額を張るレースなので、standard止まりにせず自動でpremiumへ escalate する。
+  // Vercel経由ではeffort=high(300秒上限内)、ローカルのnpm run diagnose:premium経由ではxhigh全力になる
+  // (predict.tsのpremiumEffort()参照)。平場のS/A評価は従来通り「本気診断」ボタンの手動実行に委ねる。
+  if (isGraded) {
+    const premium = await diagnoseRacePremium(input);
+    await logUsage(supabase, raceId, "premium", premium.usage);
+    await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId, "premium");
+    return NextResponse.json({ tier: "premium", result: premium.result });
+  }
+
   // 標準診断 (Sonnet)。S評価が出ても自動ではOpusへ進まず、「本気診断」ボタンの手動実行に委ねる。
   const diagnosis = await diagnoseRaceStandard(input);
   await logUsage(supabase, raceId, "standard", diagnosis.usage);
-  await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId);
+  await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId, "standard");
 
   return NextResponse.json({ tier: "standard", result: diagnosis.result });
 }

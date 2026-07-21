@@ -91,7 +91,7 @@ export async function renderDigest(
   const { data: races } = await supabase
     .from("races")
     .select(
-      "keibajo_name, race_number, race_name, race_class, grade, race_rank, honmei_horse_number, aite_horse_number"
+      "keibajo_name, race_number, race_name, race_class, grade, race_rank, honmei_horse_number, aite_horse_number, aite_horse_number_2"
     )
     .eq("race_date", date)
     .not("race_rank", "is", null)

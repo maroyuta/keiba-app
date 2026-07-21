@@ -698,6 +698,7 @@ export type Database = {
       race_recommendation_results: {
         Row: {
           aite_horse_number: number | null
+          aite_horse_number_2: number | null
           bet_type: string | null
           computed_at: string | null
           created_at: string
@@ -713,6 +714,7 @@ export type Database = {
         }
         Insert: {
           aite_horse_number?: number | null
+          aite_horse_number_2?: number | null
           bet_type?: string | null
           computed_at?: string | null
           created_at?: string
@@ -728,6 +730,7 @@ export type Database = {
         }
         Update: {
           aite_horse_number?: number | null
+          aite_horse_number_2?: number | null
           bet_type?: string | null
           computed_at?: string | null
           created_at?: string
@@ -754,13 +757,16 @@ export type Database = {
       races: {
         Row: {
           aite_horse_number: number | null
+          aite_horse_number_2: number | null
           analysis_favorite: string | null
           analysis_level: string | null
           analysis_pace: string | null
           analysis_rival: string | null
           analysis_value: string | null
           bet_amount_umaren: number | null
+          bet_amount_umaren_2: number | null
           bet_amount_wide: number | null
+          bet_amount_wide_2: number | null
           bet_type: string | null
           bias_note: string | null
           bias_reference_race_id: string | null
@@ -776,12 +782,15 @@ export type Database = {
           keibajo_name: string | null
           nichiji: number | null
           post_time: string | null
+          premium_diagnosed_at: string | null
           race_class: string | null
           race_date: string
           race_name: string | null
           race_number: number
+          race_priority_score: number | null
           race_rank: string | null
           race_rank_reason: string | null
+          reviewed_at: string | null
           track_condition: string | null
           track_type: string
           turn_direction: string | null
@@ -790,13 +799,16 @@ export type Database = {
         }
         Insert: {
           aite_horse_number?: number | null
+          aite_horse_number_2?: number | null
           analysis_favorite?: string | null
           analysis_level?: string | null
           analysis_pace?: string | null
           analysis_rival?: string | null
           analysis_value?: string | null
           bet_amount_umaren?: number | null
+          bet_amount_umaren_2?: number | null
           bet_amount_wide?: number | null
+          bet_amount_wide_2?: number | null
           bet_type?: string | null
           bias_note?: string | null
           bias_reference_race_id?: string | null
@@ -812,12 +824,15 @@ export type Database = {
           keibajo_name?: string | null
           nichiji?: number | null
           post_time?: string | null
+          premium_diagnosed_at?: string | null
           race_class?: string | null
           race_date: string
           race_name?: string | null
           race_number: number
+          race_priority_score?: number | null
           race_rank?: string | null
           race_rank_reason?: string | null
+          reviewed_at?: string | null
           track_condition?: string | null
           track_type: string
           turn_direction?: string | null
@@ -826,13 +841,16 @@ export type Database = {
         }
         Update: {
           aite_horse_number?: number | null
+          aite_horse_number_2?: number | null
           analysis_favorite?: string | null
           analysis_level?: string | null
           analysis_pace?: string | null
           analysis_rival?: string | null
           analysis_value?: string | null
           bet_amount_umaren?: number | null
+          bet_amount_umaren_2?: number | null
           bet_amount_wide?: number | null
+          bet_amount_wide_2?: number | null
           bet_type?: string | null
           bias_note?: string | null
           bias_reference_race_id?: string | null
@@ -848,12 +866,15 @@ export type Database = {
           keibajo_name?: string | null
           nichiji?: number | null
           post_time?: string | null
+          premium_diagnosed_at?: string | null
           race_class?: string | null
           race_date?: string
           race_name?: string | null
           race_number?: number
+          race_priority_score?: number | null
           race_rank?: string | null
           race_rank_reason?: string | null
+          reviewed_at?: string | null
           track_condition?: string | null
           track_type?: string
           turn_direction?: string | null
@@ -1178,4 +1199,3 @@ export type NickStatRow = Tables<"nick_stats">;
 export type ApiUsageLogRow = Tables<"api_usage_log">;
 export type RacePayoutRow = Tables<"race_payouts">;
 export type RaceRecommendationResultRow = Tables<"race_recommendation_results">;
-export type PipelineRunRow = Tables<"pipeline_runs">;

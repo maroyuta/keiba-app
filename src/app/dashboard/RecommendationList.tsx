@@ -15,6 +15,7 @@ export interface RecommendationRow {
   raceRankReason: string | null;
   honmeiHorseNumber: number | null;
   aiteHorseNumber: number | null;
+  aiteHorseNumber2: number | null;
   betType: string | null;
   stakeYen: number;
   isHit: boolean | null;
@@ -98,6 +99,7 @@ export function RecommendationList({ rows }: { rows: RecommendationRow[] }) {
                   <span>
                     {r.honmeiHorseNumber}
                     {r.aiteHorseNumber && ` → ${r.aiteHorseNumber}`}
+                    {r.aiteHorseNumber2 && `・${r.aiteHorseNumber2}`}
                   </span>
                   <span>投資 {r.stakeYen.toLocaleString()}円</span>
                   <span>払戻 {(r.returnYen ?? 0).toLocaleString()}円</span>

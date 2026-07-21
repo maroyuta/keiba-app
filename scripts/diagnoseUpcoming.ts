@@ -83,16 +83,27 @@ async function main() {
   let horsesWithHistory = 0;
   if (horseIds.length > 0) {
     const horsesWithHistorySet = new Set<string>();
+    // PostgRESTはデフォルトで1レスポンスあたり最大1000行しか返さないため、
+    // 馬1頭あたり複数走ある過去走テーブルは.in()のID数を絞っても行数側で
+    // 静かに切り詰められる(2026-07-18、215頭で実際に発生・原因特定)。
+    // .range()でページングして全件取得する。
+    const PAGE_SIZE = 1000;
     for (const idChunk of chunk(horseIds, SUPABASE_IN_CHUNK_SIZE)) {
-      const { data: pastPerf, error: pastError } = await supabase
-        .from("past_performances")
-        .select("horse_id")
-        .in("horse_id", idChunk)
-        .lt("race_date", date);
-      if (pastError) {
-        throw new Error(`past_performances取得に失敗: ${pastError.message}`);
+      let from = 0;
+      for (;;) {
+        const { data: pastPerf, error: pastError } = await supabase
+          .from("past_performances")
+          .select("horse_id")
+          .in("horse_id", idChunk)
+          .lt("race_date", date)
+          .range(from, from + PAGE_SIZE - 1);
+        if (pastError) {
+          throw new Error(`past_performances取得に失敗: ${pastError.message}`);
+        }
+        for (const p of pastPerf ?? []) horsesWithHistorySet.add(p.horse_id);
+        if (!pastPerf || pastPerf.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
       }
-      for (const p of pastPerf ?? []) horsesWithHistorySet.add(p.horse_id);
     }
     horsesWithHistory = horsesWithHistorySet.size;
   }
@@ -152,6 +163,45 @@ async function main() {
     `\n=== 完了 === 成功=${ok}件 失敗=${failed}件 実測コスト=$${totalCostUsd.toFixed(4)}` +
       `(≈¥${Math.round(totalCostUsd * 150)})`,
   );
+
+  // 「S/Aが多すぎて5〜6レースに絞れない」問題への対応(2026-07-18)。診断完了後、race_priority_score
+  // (0-100、race_rank内での妙味・確信度の相対値)で並び替えたおすすめ一覧を表示する。
+  // race_rankのカテゴリだけでは同点多数になりやすいため、この点数を優先順位の最終判断材料にする。
+  // **Sは1日最大4件までに自動的に絞られる(2026-07-19、src/lib/rank/capDailySRank.ts参照)。**
+  // このバッチが呼ぶ/api/races/[raceId]/diagnose側でレース1件ごとに機械的にチェック・格下げ済みなので、
+  // 下記の一覧に出るS評価は既にその上限を通過したものだけになっている。
+  const { data: ranked } = await supabase
+    .from("races")
+    .select(
+      "keibajo_name, race_number, race_name, race_rank, race_priority_score, honmei_horse_number, aite_horse_number, bet_type, grade",
+    )
+    .in("id", raceIds)
+    .in("race_rank", ["S", "A"])
+    .not("honmei_horse_number", "is", null)
+    .order("race_priority_score", { ascending: false, nullsFirst: false });
+
+  if (ranked && ranked.length > 0) {
+    const RECOMMENDED_COUNT = 6;
+    console.log(
+      `\n=== 買い目候補(race_priority_score順、上位${RECOMMENDED_COUNT}レースが目安) ===`,
+    );
+    ranked.forEach((r, i) => {
+      const mark = i < RECOMMENDED_COUNT ? "★" : " ";
+      console.log(
+        `${mark} ${String(i + 1).padStart(2)}. [${r.race_rank}/${r.race_priority_score ?? "?"}点] ` +
+          `${r.keibajo_name}${r.race_number}R ${r.race_name ?? ""} ` +
+          `本命${r.honmei_horse_number}-相手${r.aite_horse_number}(${r.bet_type})` +
+          `${r.grade ? " [重賞]" : ""}`,
+      );
+    });
+    if (ranked.length > RECOMMENDED_COUNT) {
+      console.log(
+        `\n[info] S/A評価が${ranked.length}件と基本の5〜6レースを超えています。★の上位${RECOMMENDED_COUNT}件を` +
+          `優先候補としていますが、最終判断はrace_rank_reason・analysis_valueの中身も確認して決めること` +
+          `(race_priority_scoreはあくまで診断の自己申告値で、絶対の正解ではない)。`,
+      );
+    }
+  }
 }
 
 main().catch((err) => {

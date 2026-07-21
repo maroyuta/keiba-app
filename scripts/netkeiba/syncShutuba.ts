@@ -43,13 +43,25 @@ async function ensureRace(
 ): Promise<{ id: string; created: boolean }> {
   const { data: existing, error: selectError } = await supabase
     .from("races")
-    .select("id")
+    .select("id, entry_count")
     .eq("jv_race_key", raceId)
     .maybeSingle();
   if (selectError) {
     throw new Error(`races検索に失敗: ${selectError.message}`);
   }
   if (existing) {
+    // entry_countは出走取消・除外で開催が近づくほど減っていくため、race行自体は
+    // insert-onlyでもentry_countだけは最新のnetkeiba値へ都度更新する(古い登録頭数の
+    // まま取り残されると「実際より多い頭数」がUIに残り続けるバグになるため)。
+    if (meta.entryCount !== null && meta.entryCount !== existing.entry_count) {
+      const { error: updateError } = await supabase
+        .from("races")
+        .update({ entry_count: meta.entryCount })
+        .eq("id", existing.id);
+      if (updateError) {
+        throw new Error(`races.entry_count更新に失敗: ${updateError.message}`);
+      }
+    }
     return { id: existing.id, created: false };
   }
   if (!meta.raceDate || !meta.trackType || !meta.distanceM || !meta.raceNumber) {

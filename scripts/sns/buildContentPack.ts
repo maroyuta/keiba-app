@@ -70,7 +70,7 @@ async function main() {
     const { data: races, error } = await supabase
       .from("races")
       .select(
-        "id, keibajo_name, race_number, race_name, race_class, grade, race_rank, race_rank_reason, honmei_horse_number, aite_horse_number, bet_type, post_time"
+        "id, keibajo_name, race_number, race_name, race_class, grade, race_rank, race_rank_reason, honmei_horse_number, aite_horse_number, aite_horse_number_2, bet_type, post_time"
       )
       .eq("race_date", date)
       .not("race_rank", "is", null)
@@ -122,7 +122,8 @@ async function main() {
       .map(
         (r) =>
           `${r.keibajo_name}${r.race_number}R ◎${r.honmei_horse_number}` +
-          (r.aite_horse_number ? `→${r.aite_horse_number}` : "")
+          (r.aite_horse_number ? `→${r.aite_horse_number}` : "") +
+          (r.aite_horse_number_2 ? `・${r.aite_horse_number_2}` : "")
       )
       .join(" / ");
     const restNote = buys.length > 3 ? ` ほか${buys.length - 3}R` : "";
@@ -153,7 +154,7 @@ ${cardTargets
   .map((r) => {
     const reason = r.race_rank_reason ?? "";
     const shortReason = reason.length > 60 ? `${reason.slice(0, 59)}…` : reason;
-    return `--- ${r.keibajo_name}${r.race_number}R ---\n${r.keibajo_name}${r.race_number}R ${r.race_name || r.race_class || ""}(${r.race_rank}評価)\n◎${r.honmei_horse_number}${r.aite_horse_number ? `→${r.aite_horse_number}` : ""}${r.bet_type ? ` ${BET_TYPE_LABELS[r.bet_type] ?? r.bet_type}` : ""}\n${shortReason}\n#競馬予想 #${r.keibajo_name}競馬`;
+    return `--- ${r.keibajo_name}${r.race_number}R ---\n${r.keibajo_name}${r.race_number}R ${r.race_name || r.race_class || ""}(${r.race_rank}評価)\n◎${r.honmei_horse_number}${r.aite_horse_number ? `→${r.aite_horse_number}` : ""}${r.aite_horse_number_2 ? `・${r.aite_horse_number_2}` : ""}${r.bet_type ? ` ${BET_TYPE_LABELS[r.bet_type] ?? r.bet_type}` : ""}\n${shortReason}\n#競馬予想 #${r.keibajo_name}競馬`;
   })
   .join("\n\n")}
 

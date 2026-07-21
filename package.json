@@ -15,6 +15,7 @@
     "sync:netkeiba:shutuba-watch": "tsx scripts/netkeiba/runShutubaWatch.ts",
     "sync:netkeiba:historical": "tsx scripts/netkeiba/runHistoricalRaces.ts",
     "diagnose:upcoming": "tsx scripts/diagnoseUpcoming.ts",
+    "diagnose:premium": "tsx scripts/diagnosePremium.ts",
     "sns:pack": "tsx scripts/sns/buildContentPack.ts",
     "sns:video": "tsx scripts/sns/makeVideo.ts",
     "sns:auto": "tsx scripts/sns/autoPost.ts"

@@ -193,6 +193,7 @@ export default async function DashboardPage() {
     raceRankReason: r.races.race_rank_reason,
     honmeiHorseNumber: r.honmei_horse_number,
     aiteHorseNumber: r.aite_horse_number,
+    aiteHorseNumber2: r.aite_horse_number_2,
     betType: r.bet_type,
     stakeYen: r.stake_yen,
     isHit: r.is_hit,
