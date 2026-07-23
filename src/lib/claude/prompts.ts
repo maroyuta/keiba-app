@@ -129,6 +129,12 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
      鵜呑みにせず必ずcorner_positionsの実数値と突き合わせること。特に「前走running_style=逃げ/先行で
      好走した馬」は、そのとき前に馬がいない楽な流れ(スロー・前残り)を得ていた可能性があり、今回も
      同じ位置が取れる保証はない — フロック警戒(妙味候補の節を参照)の直接の判断材料に使うこと
+   - **★各過去走にlikely_wide_trip(true/false/null)も付与してある。** 外枠(6〜8枠相当)から
+     逃げ・先行の位置につけていた場合にtrueになる、「内で包まれず外を回らざるを得なかった可能性」の
+     推測フラグ(2026-07-24追加)。**映像を確認できないため確定情報ではなく、あくまで枠番と序盤の
+     位置取りから導いた推測である旨を踏まえた上で使うこと。** likely_wide_trip=trueで着順が悪かった
+     過去走は、能力不足ではなく距離ロスが原因だった可能性を考慮し、その着順だけで能力を過小評価しない。
+     逆に、外を回されながらも好走できていた馬は、ロスを負ってなお通用した実力として高く評価してよい
    - **★その馬の好走が「その時のトラックバイアスに乗っただけ」なら能力を過大評価せず、逆に「バイアスに
      逆行してなお健闘した」なら真の実力の証として重く見ること(2026-07-19、ユーザー指摘)。** 好走時の
      走り方(running_style/corner_positions)が、そのレースのバイアス(bias_reference_racesや競馬場の
@@ -701,6 +707,27 @@ function inferRunningStyle(
   return "追込";
 }
 
+// 枠番(post_position)×序盤の位置取り(corner_positions)から「外を回された可能性」を機械推定する。
+// netkeibaの過去走データには映像・回顧コメントの類が一切含まれず(2026-07-24、実際にrace/comment.html等を
+// 確認したが厩舎コメント(レース前)のみで、レース後の「不利」テキストは無料範囲に存在しないと確認済み)、
+// past_performances.trouble_noteは常にnull(どのスクリプトも書き込んでいない=未実装のまま放置されていた列)。
+// 映像が見られない以上、確定的な判定はできないが、外枠(6〜8枠想定)から序盤より前めの位置につけている場合、
+// 内に包まれず外を回らざるを得なかった可能性が高い、という競馬の経験則に基づく推測フラグを代わりに付与する。
+// 内枠発走・外枠でも早々に下げて内で脚を溜めた馬はこの限りではないため対象外。あくまで推測である旨は
+// 呼び出し側(prompts.ts本文)で明示する。
+function inferWideTripRisk(
+  postPosition: number | null,
+  cornerPositions: string | null,
+  entryCount: number | null,
+): boolean | null {
+  if (!postPosition || !cornerPositions) return null;
+  const runningStyle = inferRunningStyle(cornerPositions, entryCount);
+  if (!runningStyle) return null;
+  const isOuterPost = postPosition >= 6; // 8枠制のうち外3枠を想定
+  const isForwardStyle = runningStyle === "逃げ" || runningStyle === "先行";
+  return isOuterPost && isForwardStyle;
+}
+
 function serializePastPerformance(pp: PastPerformanceRow) {
   return {
     race_date: pp.race_date,
@@ -723,6 +750,7 @@ function serializePastPerformance(pp: PastPerformanceRow) {
     margin_sec: pp.margin_sec,
     corner_positions: pp.corner_positions,
     running_style: inferRunningStyle(pp.corner_positions, pp.entry_count), // コーナー通過順からの簡易推定(逃げ/先行/差し/追込)
+    likely_wide_trip: inferWideTripRisk(pp.post_position, pp.corner_positions, pp.entry_count), // 外枠×先行速い脚質からの推測(映像なし、確定情報ではない)
     pace_mark: pp.pace_mark,
     agari_3f_sec: pp.agari_3f_sec,
     bias_note: pp.bias_note,
