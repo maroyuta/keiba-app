@@ -129,10 +129,12 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
      鵜呑みにせず必ずcorner_positionsの実数値と突き合わせること。特に「前走running_style=逃げ/先行で
      好走した馬」は、そのとき前に馬がいない楽な流れ(スロー・前残り)を得ていた可能性があり、今回も
      同じ位置が取れる保証はない — フロック警戒(妙味候補の節を参照)の直接の判断材料に使うこと
-   - **★各過去走にlikely_wide_trip(true/false/null)も付与してある。** 外枠(6〜8枠相当)から
-     逃げ・先行の位置につけていた場合にtrueになる、「内で包まれず外を回らざるを得なかった可能性」の
-     推測フラグ(2026-07-24追加)。**映像を確認できないため確定情報ではなく、あくまで枠番と序盤の
-     位置取りから導いた推測である旨を踏まえた上で使うこと。** likely_wide_trip=trueで着順が悪かった
+   - **★各過去走にlikely_wide_trip(true/false/null)も付与してある。** 外枠(6〜8枠相当)発走で、
+     かつ記録された全コーナーを通じて中団より前目(頭数の半分以内)の位置を維持し続けていた場合に
+     trueになる、「内で包まれず終始外を回らされ続けていた可能性」の推測フラグ(2026-07-24追加、
+     序盤だけ前にいて早々に下げたケースは対象外になるよう全コーナー条件に強化済み)。**映像・
+     テキスト回顧のいずれも取得できないため確定情報ではなく、あくまで枠番とコーナー通過順から
+     導いた推測である旨を踏まえた上で使うこと。** likely_wide_trip=trueで着順が悪かった
      過去走は、能力不足ではなく距離ロスが原因だった可能性を考慮し、その着順だけで能力を過小評価しない。
      逆に、外を回されながらも好走できていた馬は、ロスを負ってなお通用した実力として高く評価してよい
    - **★その馬の好走が「その時のトラックバイアスに乗っただけ」なら能力を過大評価せず、逆に「バイアスに
@@ -679,6 +681,21 @@ function serializeHorse(horse: HorseRow) {
   };
 }
 
+// "1-1-1-2"のようなコーナー通過順文字列を数値配列にパースする共通ヘルパー。
+// JV-DataのSEレコードにも4コーナー分の通過順位(corner1〜4_jyuni)という同種の構造化データは
+// あるが、こちらも「どの馬が何番手を通ったか」という数値情報のみで、不利・進路取りを記述した
+// 自由文フィールドは存在しない(2026-07-24、scripts/jvlink/parse_records.pyのparse_corner_info実装で
+// 確認済み。corner/syukaisu/jyuni=数値・通過順のみ)。そのためJV-Link経由に切り替えても
+// 「有利不利」の確定情報が得られるわけではなく、netkeiba由来のcorner_positionsと本質的に同じ
+// 種類の推測材料にしかならない。
+function parseCornerPositions(cornerPositions: string | null): number[] {
+  if (!cornerPositions) return [];
+  return cornerPositions
+    .split(/[-–]/)
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
 // コーナー通過順(例 "1-1-1-2")と頭数から脚質を機械推定する。フロック(まぐれ)警戒のため、
 // 「前走は逃げてスローで残っただけ=展開依存の好走」を、LLMが生のコーナー文字列を解釈しなくても
 // 判定できるよう、明示的なラベルにして渡す(2026-07-18)。pace_markはバックフィル分がほぼ空
@@ -688,11 +705,7 @@ function inferRunningStyle(
   cornerPositions: string | null,
   entryCount: number | null,
 ): string | null {
-  if (!cornerPositions) return null;
-  const positions = cornerPositions
-    .split(/[-–]/)
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0);
+  const positions = parseCornerPositions(cornerPositions);
   if (positions.length === 0) return null;
   const firstPos = positions[0];
   // 序盤の位置取り(先頭2コーナー平均)で脚質を判定する。最終コーナーは追い上げ後の位置なので使わない。
@@ -707,25 +720,31 @@ function inferRunningStyle(
   return "追込";
 }
 
-// 枠番(post_position)×序盤の位置取り(corner_positions)から「外を回された可能性」を機械推定する。
-// netkeibaの過去走データには映像・回顧コメントの類が一切含まれず(2026-07-24、実際にrace/comment.html等を
-// 確認したが厩舎コメント(レース前)のみで、レース後の「不利」テキストは無料範囲に存在しないと確認済み)、
-// past_performances.trouble_noteは常にnull(どのスクリプトも書き込んでいない=未実装のまま放置されていた列)。
-// 映像が見られない以上、確定的な判定はできないが、外枠(6〜8枠想定)から序盤より前めの位置につけている場合、
-// 内に包まれず外を回らざるを得なかった可能性が高い、という競馬の経験則に基づく推測フラグを代わりに付与する。
-// 内枠発走・外枠でも早々に下げて内で脚を溜めた馬はこの限りではないため対象外。あくまで推測である旨は
-// 呼び出し側(prompts.ts本文)で明示する。
+// 枠番(post_position)×全コーナーの通過順(corner_positions)から「外を回された可能性」を機械推定する。
+// netkeibaの過去走データにもJV-Dataにも映像・回顧コメントの類は一切含まれず(2026-07-24確認、
+// parseCornerPositionsのコメント参照)、past_performances.trouble_noteは常にnull(どのスクリプトも
+// 書き込んでいない=未実装のまま放置されていた列)。映像が見られない以上確定的な判定はできないため、
+// 単発の「序盤位置」だけでなく、全コーナーを通じてレース中ずっと中団より前の(=馬群の壁の中に
+// 収まれず被されなかった)位置を保っていたかまで見て精度を上げる。外枠発走で、かつ記録された
+// 全コーナーで「中団より前目の位置取りを維持し続けた」馬は、内で脚を溜める形が取れず、
+// レースの大半を外を回らされ続けていた可能性が高いと判断する。序盤だけ前にいて早々に下げた馬
+// (=一時的に前を取っただけ)はこの限りではないため対象外とする。あくまで推測であり確定情報では
+// ない旨は呼び出し側(prompts.ts本文)で明示する。
 function inferWideTripRisk(
   postPosition: number | null,
   cornerPositions: string | null,
   entryCount: number | null,
 ): boolean | null {
-  if (!postPosition || !cornerPositions) return null;
-  const runningStyle = inferRunningStyle(cornerPositions, entryCount);
-  if (!runningStyle) return null;
+  if (!postPosition) return null;
+  const positions = parseCornerPositions(cornerPositions);
+  if (positions.length === 0) return null;
   const isOuterPost = postPosition >= 6; // 8枠制のうち外3枠を想定
-  const isForwardStyle = runningStyle === "逃げ" || runningStyle === "先行";
-  return isOuterPost && isForwardStyle;
+  if (!isOuterPost) return false;
+  const field = entryCount && entryCount > 0 ? entryCount : 14;
+  // 記録された全コーナーで中団(頭数の50%以内)より前めの位置を維持し続けていたか。
+  // 序盤だけ前にいて後半下げたケースは対象外にするため、全コーナーの条件にしている。
+  const stayedForwardThroughout = positions.every((p) => p / field <= 0.5);
+  return stayedForwardThroughout;
 }
 
 function serializePastPerformance(pp: PastPerformanceRow) {
@@ -750,7 +769,7 @@ function serializePastPerformance(pp: PastPerformanceRow) {
     margin_sec: pp.margin_sec,
     corner_positions: pp.corner_positions,
     running_style: inferRunningStyle(pp.corner_positions, pp.entry_count), // コーナー通過順からの簡易推定(逃げ/先行/差し/追込)
-    likely_wide_trip: inferWideTripRisk(pp.post_position, pp.corner_positions, pp.entry_count), // 外枠×先行速い脚質からの推測(映像なし、確定情報ではない)
+    likely_wide_trip: inferWideTripRisk(pp.post_position, pp.corner_positions, pp.entry_count), // 外枠発走×全コーナー中団より前を維持、からの推測(映像・回顧なし、確定情報ではない)
     pace_mark: pp.pace_mark,
     agari_3f_sec: pp.agari_3f_sec,
     bias_note: pp.bias_note,
