@@ -10,7 +10,7 @@ import { createNetkeibaSyncClient } from "./supabaseClient";
 // horsesだけは他の同期スクリプトと同様にupsert(既存行のname/sex/trainer等を補強するだけで
 // 実害が無いため)。
 //
-// 枠番(post_position)・馬番(horse_number)は枠順確定(ユーザーの実感では金・土、レースにより前後)が
+// 枠番(post_position)・馬番(horse_number)は枠順確定(JRA公式スケジュール実測: 木曜16時頃に馬番なし出馬表、金曜10時頃に土曜分の枠番確定、土曜10時頃に日曜分の枠番確定、2026-07-23確認)が
 // 終わるまでnetkeiba側にも載らない。確定前に呼んだ場合はraces/horsesだけ作成し、race_entriesは
 // 「確定待ち」としてスキップする。確定後に同じrace_idで再実行すればrace_entriesが作成される
 // (race_id・races行が既にあっても壊さない設計なので、様子見しながら何度でも再実行してよい)。
