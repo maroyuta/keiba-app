@@ -325,7 +325,62 @@ def parse_hr(data: bytes) -> dict:
     return d
 
 
-PARSERS = {"RA": parse_ra, "SE": parse_se, "JG": parse_jg, "HR": parse_hr, "O1": parse_o1}
+def parse_hn(data: bytes) -> dict:
+    """JV_HN_HANSHOKU(繁殖馬マスタ)。父馬/母馬の繁殖登録番号を持つため、
+    産駒マスタ(SK)の3代血統に出てくる繁殖登録番号を馬名に変換するための
+    ルックアップとして使う。"""
+    c = ByteCursor(data)
+    d = {}
+    parse_record_id(c, d)
+    d["hanshoku_toroku_num"] = c.take(10)
+    c.take(8)  # 予備
+    d["ketto_num"] = c.take(10)
+    c.take(1)  # 予備
+    d["bamei"] = c.take(36)
+    d["bamei_hankaku_kana"] = c.take(40)
+    d["bamei_eng"] = c.take(80)
+    d["birth_year"] = c.take(4)
+    d["sex_cd"] = c.take(1)
+    d["hinsyu_cd"] = c.take(1)
+    d["keiro_cd"] = c.take(2)
+    d["hanshoku_mochikomi_kubun"] = c.take(1)
+    d["import_year"] = c.take(4)
+    d["sanchi_name"] = c.take(20)
+    d["sire_hanshoku_toroku_num"] = c.take(10)
+    d["dam_hanshoku_toroku_num"] = c.take(10)
+    return d
+
+
+def parse_sk(data: bytes) -> dict:
+    """JV_SK_SANKU(産駒マスタ)。3代血統(14頭分の繁殖登録番号)を1レコードで保有。
+    繁殖登録番号→馬名の変換はHN(繁殖馬マスタ)側で行う(このパーサーは番号のまま返す)。
+    """
+    c = ByteCursor(data)
+    d = {}
+    parse_record_id(c, d)
+    d["ketto_num"] = c.take(10)
+    d["birth_date"] = c.take(8)
+    d["sex_cd"] = c.take(1)
+    d["hinsyu_cd"] = c.take(1)
+    d["keiro_cd"] = c.take(2)
+    d["sanku_mochikomi_kubun"] = c.take(1)
+    d["import_year"] = c.take(4)
+    d["seisansya_code"] = c.take(8)
+    d["sanchi_name"] = c.take(20)
+    # 父･母･父父･父母･母父･母母･父父父･父父母･父母父･父母母･母父父･母父母･母母父･母母母 の順
+    _flatten_list(d, "hanshoku_toroku_num", [c.take(10) for _ in range(14)])
+    return d
+
+
+PARSERS = {
+    "RA": parse_ra,
+    "SE": parse_se,
+    "JG": parse_jg,
+    "HR": parse_hr,
+    "O1": parse_o1,
+    "HN": parse_hn,
+    "SK": parse_sk,
+}
 
 
 def read_lines(path: str):

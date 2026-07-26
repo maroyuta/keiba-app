@@ -100,14 +100,26 @@ def finish_pipeline_run(run_id: "str | None", status: str, error_message: "str |
     _pipeline_runs_request("PATCH", f"?id=eq.{run_id}", body)
 
 
-def compute_fromtime() -> str:
-    last_sync_file = OUT_DIR / "last_sync.txt"
-    if last_sync_file.exists():
-        value = last_sync_file.read_text(encoding="utf-8").strip()
+def compute_fromtime(state_filename: str, initial_fromtime: str) -> str:
+    state_file = OUT_DIR / state_filename
+    if state_file.exists():
+        value = state_file.read_text(encoding="utf-8").strip()
         if value:
             return value
+    return initial_fromtime
+
+
+def compute_race_fromtime() -> str:
     # 初回や状態ファイルが無い場合は直近7日分まで遡る
-    return (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y%m%d%H%M%S")
+    fallback = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y%m%d%H%M%S")
+    return compute_fromtime("last_sync.txt", fallback)
+
+
+def compute_blod_fromtime() -> str:
+    # 産駒マスタ(SK)/繁殖馬マスタ(HN)は1986年以降のデータ。初回はここから全件取得し、
+    # 以降はlast_sync_blod.txt(前回のlastfiletimestamp)からの差分のみになる。血統情報は
+    # 基本的に不変(引退後に変わらない)なので、毎週全頭を再取得する必要はない。
+    return compute_fromtime("last_sync_blod.txt", "19860101000000")
 
 
 def main() -> None:
@@ -125,13 +137,21 @@ def main() -> None:
     LOG_DIR.mkdir(exist_ok=True)
     OUT_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"sync_{datetime.datetime.now():%Y%m%d_%H%M%S}.log"
-    fromtime = compute_fromtime()
+    race_fromtime = compute_race_fromtime()
+    blod_fromtime = compute_blod_fromtime()
 
     with open(log_path, "w", encoding="utf-8") as log:
-        print(f"[週次同期開始] fromtime={fromtime}", file=log, flush=True)
+        print(
+            f"[週次同期開始] race_fromtime={race_fromtime} blod_fromtime={blod_fromtime}",
+            file=log,
+            flush=True,
+        )
         try:
             run(
-                ["py", PY32_TAG, "fetch_raw.py", "RACE", fromtime, "1", str(OUT_DIR), "--fix-mojibake"],
+                [
+                    "py", PY32_TAG, "fetch_raw.py", "RACE", race_fromtime, "1", str(OUT_DIR),
+                    "--fix-mojibake",
+                ],
                 log,
             )
             run([sys.executable, "parse_records.py", str(OUT_DIR), str(OUT_DIR)], log)
@@ -145,6 +165,31 @@ def main() -> None:
                     str(ENV_FILE),
                     "--hr-csv",
                     str(OUT_DIR / "HR_parsed.csv"),
+                ],
+                log,
+            )
+            # BLOD(繁殖馬マスタHN/産駒マスタSK、3代血統)。fromtimeの管理をRACEと分けている
+            # (last_sync_blod.txt、血統は不変なので初回一括取得後は差分のみで足りる)。
+            # fetch_raw.pyのstale-cleanupで直前のRACE分のtxtは消えるが、既にload済みのため
+            # 実害はない。RA_parsed.csv/SE_parsed.csv自体は消えず残るので、下のload呼び出しに
+            # そのまま再利用できる(races/horsesの再upsertは冗長だが冪等なので害はない)。
+            run(
+                ["py", PY32_TAG, "fetch_raw.py", "BLOD", blod_fromtime, "1", str(OUT_DIR)],
+                log,
+            )
+            run([sys.executable, "parse_records.py", str(OUT_DIR), str(OUT_DIR)], log)
+            run(
+                [
+                    sys.executable,
+                    "load_to_supabase.py",
+                    str(OUT_DIR / "RA_parsed.csv"),
+                    str(OUT_DIR / "SE_parsed.csv"),
+                    "--env-file",
+                    str(ENV_FILE),
+                    "--hn-csv",
+                    str(OUT_DIR / "HN_parsed.csv"),
+                    "--sk-csv",
+                    str(OUT_DIR / "SK_parsed.csv"),
                 ],
                 log,
             )

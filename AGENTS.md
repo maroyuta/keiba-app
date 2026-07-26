@@ -6,6 +6,45 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
+## 🧬 JV-Link経由の3代血統フル(BLOD)実装したが、実機でdataspec="BLOD"が取得できない壁 (2026-07-27)
+
+netkeiba経由の血統バックフィルは父・母・母父の1世代分のみで、`horse_pedigrees`(JV-DataのBLOD準拠、
+3代血統14頭分)は0件のままだった。これを埋めるためJV-Link経由のBLOD実装に着手した。
+
+**実装した内容(コードは完成・コミット済み、動作未確認):**
+- JV-Data仕様書(`JV-Data4901.xlsx`)の「フォーマット」シートで、産駒マスタ(`SK`、レコード長208バイト)
+  と繁殖馬マスタ(`HN`、レコード長251バイト)のバイトオフセットを確認。`SK`は血統登録番号(位置12・10バイト)
+  の後、位置67から10バイト×14項目で「父･母･父父･父母･母父･母母･父父父･父父母･父母父･父母母･母父父･
+  母父母･母母父･母母母」の順に**繁殖登録番号**(馬名ではない数値ID)を保持している。`horse_pedigrees`の
+  カラムは`*_name`(馬名text)なので、`HN`(繁殖登録番号→馬名のルックアップ)も別途必要と判明し、
+  `parse_hn()`も実装した
+- `scripts/jvlink/parse_records.py`: `parse_hn()`/`parse_sk()`を追加、`PARSERS`へ登録
+- `scripts/jvlink/fetch_raw.py`: 差分同期の状態ファイルをdataspecごとに分離(`last_sync.txt`はRACE用の
+  ままとし、`last_sync_{dataspec}.txt`を新設)。stale-cleanupの除外条件も`last_sync*`に広げ、RACE→BLODの
+  2段呼び出しで互いの状態ファイルを消さないようにした
+- `scripts/jvlink/load_to_supabase.py`: `--hn-csv`/`--sk-csv`を追加。繁殖登録番号→馬名の辞書を`HN`から作り、
+  `SK`の血統登録番号(`horses.jv_horse_id`)でhorse_idを解決して`horse_pedigrees`へupsertする処理を実装
+- `scripts/jvlink/run_weekly_sync.py`: RACE(既存)の後にBLOD取得ステップを追加。血統は基本的に不変なため
+  `last_sync_blod.txt`が無い初回は`19860101000000`(BLODの提供開始年)から取得し、以降は差分のみにする設計
+
+**⚠️未解決の壁: 実機で`dataspec="BLOD"`が`option=1`で常に`errcode=-1`(該当データなし)を返す。**
+2026年以降・2021年以降・1986年以降(実質全期間)のどのfromtimeでも同じ結果になり、単純な「差分なし」
+ではありえない。切り分けのため同じ`option=1`で既に本番稼働中の`SLOP`(坂路調教、AGENTS.md「追い切り
+タイムのデータソース」節参照)を同条件で試したところ726ファイル・16万件超を正常取得できたため、
+**`option=1`自体・JV-Link接続自体・利用キーの認証は正常。BLODというdataspec固有の問題**と判断した。
+`option=3`(セットアップ)も試したが、公式コード表の`errcode=-2`(セットアップダイアログでキャンセルが
+押された)が返った。非対話実行(このタスクは32bit Pythonをコマンドラインから直接叩いて検証)ではセットアップ
+ダイアログに応答できず自動キャンセルされたと考えられ、これは織り込み済みの制約(タスクスケジューラからの
+無人実行ではそもそもoption=3/4は使えない)。
+
+**次にやること: ユーザー自身がJRA-VANに、この利用キーの契約でBLOD(血統情報)データ種別が提供対象に
+含まれているか問い合わせ予定。** 含まれていない場合はプラン変更等の契約側の対応が必要になる。含まれて
+いるのにこの挙動なら、JVSetUIPropertiesダイアログを対話的に開いて契約状況を画面上で確認する、または
+JRA-VANサポートに実際の症状(dataspec=BLOD, option=1, fromtime=19860101000000でもerrcode=-1)を伝えて
+調査してもらう流れになる。**問い合わせ結果が出たら、このセクションを更新のうえ実機再テスト→実データ検証
+(netkeibaの血統ページと突き合わせ)→対象馬(race_entries登場馬、5000頭規模)の一括バックフィルへ進む。**
+`horse_pedigrees`は現状も0件のまま。
+
 ## 🛠️ Windows週次バッチ3本(JV-Link同期/回収率算出/netkeiba直近同期)が一度も動いていなかった件を修正 (2026-07-26)
 
 2026-07-13にタスクスケジューラへ登録したはずのJVLinkWeeklySync(月6:00)/ComputeRecommendationResults
@@ -37,6 +76,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
   次にこのファイルを読むセッションは、`pipeline_runs`で該当job_nameが月曜早朝の時刻で
   `success`記録されているか確認すること。されていなければ電源復帰以外の要因(BIOS側のRTC
   ウェイク設定等)を疑う
+  (2026-07-27 00:19追記: 同日中に確認を試みたが、その時点でまだ6:00より前だったため
+  判断できなかった。次回セッションで改めて確認すること)
 - タスクB(JV-Link経由の3代血統フル・BLOD産駒マスタ取得)は今回`git pull`後も未着手のまま
   (`fetch_raw.py`/`parse_records.py`/`load_to_supabase.py`にBLOD関連実装なし、
   `horse_pedigrees`は引き続き0件)。時間の都合で今回は着手せず

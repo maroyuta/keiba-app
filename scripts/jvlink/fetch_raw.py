@@ -81,10 +81,12 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
     # 差分同期では各実行のout/を「今回取得した分だけ」に保ちたい。ファイルを追記(mode="a")で
     # 開くため、掃除しないと実行のたびにRA.txt等へ累積し、後段のパース/upsert対象が全履歴へ
     # 際限なく膨らむ。JVOpen成功(=今回書き込む分がある)時点で、前回までのレコードtxtを消す。
-    # last_sync.txt(差分同期の状態)は残す。JVOpenが-1(新規データなし)の場合はこの手前で
-    # returnしているので、その回はstaleなtxtを残して後段が前回分を再処理できる。
+    # last_sync*.txt(差分同期の状態、dataspecごとに複数ある)は残す。JVOpenが-1(新規データなし)
+    # の場合はこの手前でreturnしているので、その回はstaleなtxtを残して後段が前回分を再処理できる。
+    # 同じout_dirを複数dataspec(RACE→BLOD等)で使い回す運用のため、このタイミングで前段の
+    # dataspecのレコードtxtも一緒に消えるが、前段は既にparse/load済みである前提なので実害はない。
     for stale in out_dir.glob("*.txt"):
-        if stale.name != "last_sync.txt":
+        if not stale.name.startswith("last_sync"):
             stale.unlink()
 
     # ダウンロードが必要な分がある場合、JVStatusで完了を待つ。
@@ -148,9 +150,13 @@ def fetch(dataspec: str, fromtime: str, option: int, out_dir: Path, apply_mojiba
 
     # 差分同期用: 次回JVOpenのfromtimeにそのまま使えるlastfiletimestampを保存しておく。
     # option=1(通常データ)実行時のみ意味を持つ(option=2/3/4では差分の起点にしない)。
+    # dataspecごとに別ファイルにする(RACEとBLODは更新頻度も同期の起点も別物のため、
+    # 1つのfromtimeで両方を管理すると片方の差分同期が壊れる)。既存のRACE運用との
+    # 互換性のため、dataspec="RACE"のときだけ従来通りlast_sync.txtに書く。
+    state_filename = "last_sync.txt" if dataspec == "RACE" else f"last_sync_{dataspec.lower()}.txt"
     if option == 1 and lastfiletimestamp:
-        (out_dir / "last_sync.txt").write_text(str(lastfiletimestamp), encoding="utf-8")
-        print(f"[差分同期] last_sync.txt に {lastfiletimestamp} を保存しました。", file=sys.stderr)
+        (out_dir / state_filename).write_text(str(lastfiletimestamp), encoding="utf-8")
+        print(f"[差分同期] {state_filename} に {lastfiletimestamp} を保存しました。", file=sys.stderr)
 
 
 def main() -> None:

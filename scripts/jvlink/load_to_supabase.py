@@ -98,6 +98,15 @@ JYOKEN_CD_SPECIAL_NAMES = {
     "999": "オープン",
 }
 
+# horse_pedigrees(3代血統)の列名。SK(産駒マスタ)の3代血統繁殖登録番号14項目
+# (父･母･父父･父母･母父･母母･父父父･父父母･父母父･父母母･母父父･母父母･母母父･母母母)と
+# この順序で対応する(parse_records.pyのparse_sk()参照)。
+PEDIGREE_COLUMNS = [
+    "sire_name", "dam_name", "sire_sire_name", "sire_dam_name", "dam_sire_name", "dam_dam_name",
+    "sire_sire_sire_name", "sire_sire_dam_name", "sire_dam_sire_name", "sire_dam_dam_name",
+    "dam_sire_sire_name", "dam_sire_dam_name", "dam_dam_sire_name", "dam_dam_dam_name",
+]
+
 # HR_parsed.csvの賭式ごとの列プレフィックス -> (race_payouts.bet_type, 件数, 馬番の桁数, 組み合わせの頭数)
 # 件数・桁数はparse_records.pyのparse_hr()(JV_HR_PAY構造体準拠)と対応させている。
 PAYOUT_GROUPS = {
@@ -408,6 +417,16 @@ def main() -> None:
         help="O1_parsed.csv(単勝・複勝・枠連オッズ、JVRTOpen由来)のパス。"
         "指定時はrace_entries.odds_win/expected_popularityを更新する",
     )
+    parser.add_argument(
+        "--hn-csv",
+        help="HN_parsed.csv(繁殖馬マスタ)のパス。--sk-csvと併用時のみ使う"
+        "(繁殖登録番号から馬名を引くルックアップ用)",
+    )
+    parser.add_argument(
+        "--sk-csv",
+        help="SK_parsed.csv(産駒マスタ、3代血統)のパス。指定時はhorse_pedigreesへupsertする"
+        "(--hn-csvも必須)",
+    )
     args = parser.parse_args()
 
     if args.env_file:
@@ -562,6 +581,70 @@ def main() -> None:
 
             print(
                 f"[race_entries odds] {odds_updated}頭分 更新完了 (race未特定でスキップ={odds_skipped_no_race})",
+                file=sys.stderr,
+            )
+
+    if args.hn_csv and args.sk_csv:
+        if not os.path.exists(args.hn_csv) or not os.path.exists(args.sk_csv):
+            print(
+                f"[horse_pedigrees] {args.hn_csv} または {args.sk_csv} が見つからないためスキップ",
+                file=sys.stderr,
+            )
+        else:
+            with open(args.hn_csv, encoding="utf-8") as f:
+                hn_rows = list(csv.DictReader(f))
+            with open(args.sk_csv, encoding="utf-8") as f:
+                sk_rows = list(csv.DictReader(f))
+            print(f"[読み込み] HN={len(hn_rows)}件 SK={len(sk_rows)}件", file=sys.stderr)
+
+            # 繁殖登録番号 -> 馬名(SKの14項目はいずれも繁殖登録番号のままなので、
+            # このルックアップで馬名に変換してhorse_pedigreesの*_name列へ入れる)
+            name_by_hanshoku_num = {
+                r["hanshoku_toroku_num"]: r["bamei"]
+                for r in hn_rows
+                if (r.get("hanshoku_toroku_num") or "").strip()
+            }
+
+            # SK対象馬(血統登録番号=horses.jv_horse_id)のhorse_idをSupabaseから解決する。
+            # SK.txtの対象は今回のBLOD差分更新分であり、今回のSE(出走馬)と必ずしも
+            # 一致しないため、既存のhorse_id_by_jv_idに無ければ都度問い合わせる。
+            jv_ids_needed = sorted(
+                {r["ketto_num"] for r in sk_rows if (r.get("ketto_num") or "").strip()}
+                - horse_id_by_jv_id.keys()
+            )
+            if jv_ids_needed:
+                chunk_size = 100
+                for i in range(0, len(jv_ids_needed), chunk_size):
+                    chunk = jv_ids_needed[i : i + chunk_size]
+                    lookup = client.select(
+                        "horses",
+                        {"jv_horse_id": f"in.({','.join(chunk)})", "select": "id,jv_horse_id"},
+                    )
+                    for h in lookup:
+                        horse_id_by_jv_id[h["jv_horse_id"]] = h["id"]
+
+            pedigree_payloads = []
+            pedigree_skipped_no_horse = 0
+            for row in sk_rows:
+                horse_id = horse_id_by_jv_id.get(row.get("ketto_num"))
+                if not horse_id:
+                    # このアプリのhorsesにまだ登録されていない馬(race_entriesに未出走)は
+                    # 対象外。出走時にhorsesへ登録された後、次回のBLOD差分同期で拾われる。
+                    pedigree_skipped_no_horse += 1
+                    continue
+                payload = {"horse_id": horse_id, "data_source": "jv_link"}
+                for i, col in enumerate(PEDIGREE_COLUMNS, start=1):
+                    num = (row.get(f"hanshoku_toroku_num{i}") or "").strip()
+                    payload[col] = name_by_hanshoku_num.get(num)
+                pedigree_payloads.append(payload)
+
+            pedigree_payloads = dedupe_by_key(pedigree_payloads, lambda p: p["horse_id"])
+            pedigree_results = client.upsert(
+                "horse_pedigrees", pedigree_payloads, on_conflict="horse_id"
+            )
+            print(
+                f"[horse_pedigrees] {len(pedigree_results)}件 upsert完了 "
+                f"(対象馬未登録でスキップ={pedigree_skipped_no_horse})",
                 file=sys.stderr,
             )
 
