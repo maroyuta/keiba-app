@@ -6,6 +6,41 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
+## 🛠️ Windows週次バッチ3本(JV-Link同期/回収率算出/netkeiba直近同期)が一度も動いていなかった件を修正 (2026-07-26)
+
+2026-07-13にタスクスケジューラへ登録したはずのJVLinkWeeklySync(月6:00)/ComputeRecommendationResults
+(月7:00)/SyncNetkeibaRecent(月8:00)が、登録以来`pipeline_runs`に実行記録が一度も入っていないと
+2026-07-21にユーザーが気づき、Windows側セッションで調査した。**原因は2つ重なっていた。**
+
+**原因1(本命): 電源設定でスリープ後に自動で休止状態(Hibernate)へ移行する設定になっており、
+休止状態からの`WakeToRun`タイマー復帰が機能していなかった。** イベントログ確認の結果、
+2026-07-15(水)夜〜2026-07-20(月)11時過ぎまで実に5日間休止状態のままで、月曜6-8時台の
+実行タイミングを完全に逃していた。タスク側の設定(`WakeToRun=true`/`StartWhenAvailable=true`)は
+2026-07-13登録時のまま正しく維持されており、タスクスケジューラ側の設定ミスではなかった。
+`powercfg /change hibernate-timeout-ac 0` / `hibernate-timeout-dc 0`で休止状態への自動移行を
+無効化し、S3スリープからのタイマー復帰のみに一本化して解消(バッテリー非搭載のデスクトップと
+判明したためDC側の設定は実質影響なし)。
+
+**原因2(想定外・こちらも実質的な原因): ローカルのWindows側gitリポジトリが`origin/main`から
+35コミット以上遅れていた。** `git status`は「up to date」と表示していたが、これは`git fetch`
+未実行のまま古いローカル参照を見ていただけだった。実際にはMac側で`pipeline_runs`記録ロジック
+(`aa4e10e`)を含む大量の開発が進んでおり、Windows側は記録ロジックが実装される**前**の
+`run_weekly_sync.py`/`compute_recommendation_results.py`/`scripts/netkeiba/syncRecentRaces.ts`を
+実行し続けていた。つまり仮に自動実行が成功していたとしても、記録自体が残らないバージョンだった。
+`git pull`(fast-forward、コンフリクトなし)+`npm install`で最新化。
+
+**対応・確認:**
+- タスク自体(3つとも)はタスクスケジューラから消えておらず`Enabled`のままだったため、再登録は不要
+- 最新化後、3スクリプトを手動実行しSupabase `pipeline_runs`に`jvlink_weekly_sync`/
+  `compute_recommendation_results`/`sync_netkeiba_recent`いずれも`status=success`で記録されることを確認済み
+- **残課題: 次回月曜(2026-07-27) 6:00/7:00/8:00の無人自動実行が実際に動くかは未検証。**
+  次にこのファイルを読むセッションは、`pipeline_runs`で該当job_nameが月曜早朝の時刻で
+  `success`記録されているか確認すること。されていなければ電源復帰以外の要因(BIOS側のRTC
+  ウェイク設定等)を疑う
+- タスクB(JV-Link経由の3代血統フル・BLOD産駒マスタ取得)は今回`git pull`後も未着手のまま
+  (`fetch_raw.py`/`parse_records.py`/`load_to_supabase.py`にBLOD関連実装なし、
+  `horse_pedigrees`は引き続き0件)。時間の都合で今回は着手せず
+
 ## 🕳️ past_performances.trouble_noteが未実装のまま放置されていた穴を発見・代替策を実装 (2026-07-24)
 
 ユーザーから「過去走の有利不利(展開が向かなかった・外を回した等)もちゃんと取れているか、JV-VANで
