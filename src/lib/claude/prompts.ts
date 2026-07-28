@@ -693,20 +693,19 @@ standardでは常に0]・馬体重増減5)を加え、合計100点満点とす�
 - 極端な鉄板(1番人気1.5倍前後)・少頭数(11頭以下)はrace_rankをCとしhonmei/aite等をnullにする。
   ただし重賞(gradeが設定されている場合)はこれらに一切左右されず必ず購入すること
 
-## 低人気馬の簡易化(シミュレーション専用の省力ルール)
+## 低人気馬の簡易化(シミュレーション専用)
 
-**馬券対象は1〜9番人気(目安)に限定される。expected_popularity(無ければodds_win昇順の順位で
-代用)から見て10番人気相当以降の馬については、上記の統合評価スコア(4軸+ノイズ割引+ボーナス)を
-1頭ずつ細かく精査する必要はない。** これらの馬について実際に必要なのは以下の2点のみ:
-1. その馬のrunning_style(脚質)・corner_positionsから、今回の隊列予想(逃げ争いの頭数・
+**馬券対象は1〜9番人気(目安)に限定される。10番人気相当以降の馬については、過去走の詳細データ
+自体を渡していない(post_position/horse_number/horse_name/odds_win/expected_popularity/
+直近走の脚質ラベルのみ)。** これらの馬に上記の統合評価スコア(4軸+ノイズ割引+ボーナス)を
+適用しようとしないこと(そもそも判断に必要なデータが無い)。実際に必要なのは以下の2点のみ:
+1. 渡された直近走の脚質ラベル(recent_running_style)から、今回の隊列予想(逃げ争いの頭数・
    先行馬の厚さ)にどう関わるかを大まかに把握すること(analysis_pace・predicted_biasの
-   判断材料として使うため、完全に無視してよいわけではない)
-2. horse_rankは機械的にB(明らかに崩れる材料が見えるならC)を付与し、horse_rank_commentも
-   「人気薄・馬券対象外」程度の一言に留めてよい(honmei/aiteの候補にはしないため、詳しい
-   妙味判定・ノイズ割引の精査は不要)
+   判断材料として使う)
+2. horse_rankは機械的にB(逃げ争いが激しく展開的に厳しそうならC)を付与し、
+   horse_rank_commentは「人気薄・馬券対象外」程度の一言に留める
 
-entries配列への出力自体は全頭分省略しないこと(出力形式の要件は変わらない)。省略してよいのは
-「精査の深さ」であって「出力の有無」ではない。`;
+entries配列への出力自体は全頭分省略しないこと(出力形式の要件は変わらない)。`;
 
 // premium(Opus)専用。standardは血統/調教データを渡さない軽量ペイロードのため、この節は
 // standardのプロンプトには含めない(2026-07-13、コスト削減のためtier間で調査の深さを分離)。
@@ -1170,6 +1169,68 @@ export function buildStandardPayload(input: RaceDiagnosisInput): string {
     })),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
     entries: input.entries.map(serializeStandardEntry),
+  };
+  return JSON.stringify(payload);
+}
+
+// ============================================================
+// シミュレーション専用: 低人気馬のデータそのものを削るペイロード(2026-07-28)
+// ============================================================
+//
+// 「精査するな」とプロンプトで指示するだけでは、モデルは律儀に手を抜いてくれず
+// (実測でoutput/thinkingトークンが本番並みかそれ以上のままだった)、コストは下がらなかった。
+// 馬券方針で1〜9番人気しか対象にしないと決めている以上、10番人気以降の馬の過去走データ
+// (past_performances、1頭3走分)自体をそもそも渡さなければ、読み込む/考える対象が
+// 物理的に無くなりトークンも減るはず、というユーザー指摘に基づく。
+const LOW_POPULARITY_RANK_THRESHOLD = 9;
+
+// expected_popularityが全頭に揃っていればそれを、無ければodds_win昇順(既存のenforcePopularityGuard
+// と同じ代替ルール)を人気順の代用にして、馬番→人気順位のMapを作る。
+function computePopularityRanks(entries: EntryDiagnosisInput[]): Map<number, number> {
+  const allHavePopularity = entries.every((e) => e.entry.expected_popularity != null);
+  const sortKey = (e: EntryDiagnosisInput) =>
+    allHavePopularity
+      ? (e.entry.expected_popularity as number)
+      : (e.entry.odds_win ?? Number.POSITIVE_INFINITY);
+  const sorted = [...entries].sort((a, b) => sortKey(a) - sortKey(b));
+  const ranks = new Map<number, number>();
+  sorted.forEach((e, i) => ranks.set(e.entry.horse_number, i + 1));
+  return ranks;
+}
+
+// 10番人気以降(目安)の馬は、隊列予想(analysis_pace/predicted_bias)に使う最低限の情報
+// (直近走の脚質ラベル1つ)だけ残し、過去走の詳細(corner_positions・margin_sec・
+// track_condition等)は渡さない。honmei/aiteの候補にはならないため、ノイズ割引や
+// 妙味判定に使う細かいデータは不要という判断。
+function serializeLowPopularityEntry(input: EntryDiagnosisInput) {
+  const mostRecent = input.pastPerformances[0] ?? null;
+  return {
+    post_position: input.entry.post_position,
+    horse_number: input.entry.horse_number,
+    horse_name: input.horse.horse_name,
+    odds_win: input.entry.odds_win,
+    expected_popularity: input.entry.expected_popularity,
+    recent_running_style: mostRecent
+      ? inferRunningStyle(mostRecent.corner_positions, mostRecent.entry_count)
+      : null,
+    note: "10番人気相当以降のため馬券対象外。過去走の詳細データは省略済み(隊列予想の参考用に直近の脚質のみ付与)",
+  };
+}
+
+export function buildSimulationStandardPayload(input: RaceDiagnosisInput): string {
+  const ranks = computePopularityRanks(input.entries);
+  const payload = {
+    race: serializeRace(input.race),
+    bias_reference_races: input.biasReferenceRaces.map((r) => ({
+      race_date: r.raceDate,
+      track_condition: r.trackCondition,
+      bias_note: r.biasNote,
+    })),
+    race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
+    entries: input.entries.map((e) => {
+      const rank = ranks.get(e.entry.horse_number) ?? 0;
+      return rank > LOW_POPULARITY_RANK_THRESHOLD ? serializeLowPopularityEntry(e) : serializeStandardEntry(e);
+    }),
   };
   return JSON.stringify(payload);
 }

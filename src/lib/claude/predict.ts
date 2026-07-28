@@ -7,6 +7,7 @@ import {
   buildRaceDataPayload,
   buildScreeningPayload,
   buildStandardPayload,
+  buildSimulationStandardPayload,
   type RaceDiagnosisInput,
   type DiagnosisResult,
   type ScreeningResult,
@@ -116,24 +117,26 @@ export type StandardPromptMode = "full" | "simulation";
 // 明示的に渡すことでコストを下げられる(2026-07-28、thinkingの出力トークンが減り単価が下がる。
 // プロンプトの骨格・大枠を検証する目的では、必ずしもhigh effortのフル思考量は要らないという判断)。
 //
-// promptModeは省略時"full"(本番と同じSTANDARD_SYSTEM_PROMPT)。バックテスト・シミュレーション
-// 実行時のみ呼び出し側(route.tsの?mode=simulationクエリ)で"simulation"を渡すと、CORE_RULESを
-// 簡易版(SIMULATION_STANDARD_SYSTEM_PROMPT)に差し替え、プロンプト自体の分量を減らして
-// thinkingの推論量を落とす(2026-07-28。effort調整・出力コメント短縮の両方が実測で
-// コスト削減効果が乏しかったため、プロンプトの実質的な内容そのものを削る方向で対応)。
+// promptModeは省略時"full"(本番と同じSTANDARD_SYSTEM_PROMPT + フルペイロード)。バックテスト・
+// シミュレーション実行時のみ呼び出し側(route.tsの?mode=simulationクエリ)で"simulation"を渡すと、
+// CORE_RULESを簡易版に差し替えるだけでなく、10番人気以降(馬券対象外)の馬の過去走データ自体を
+// ペイロードから削る(buildSimulationStandardPayload)。プロンプトの指示だけで「精査するな」と
+// 伝えても実測でthinkingトークンは減らなかったため(2026-07-28)、データそのものを渡さない
+// ことで物理的に考える対象を減らす方向に切り替えた。
 export async function diagnoseRaceStandard(
   input: RaceDiagnosisInput,
   effort: StandardEffort = "high",
   promptMode: StandardPromptMode = "full",
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
   const system = promptMode === "simulation" ? SIMULATION_STANDARD_SYSTEM_PROMPT : STANDARD_SYSTEM_PROMPT;
+  const payload = promptMode === "simulation" ? buildSimulationStandardPayload(input) : buildStandardPayload(input);
   const stream = anthropic.messages.stream({
     model: CLAUDE_MODELS.standard,
     max_tokens: 16000,
     thinking: { type: "adaptive" },
     output_config: { effort },
     system,
-    messages: [{ role: "user", content: buildStandardPayload(input) }],
+    messages: [{ role: "user", content: payload }],
   });
   const message = await stream.finalMessage();
   return {
