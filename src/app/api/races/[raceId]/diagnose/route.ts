@@ -506,6 +506,13 @@ async function persistDiagnosis(
   }
 }
 
+// デバッグ用フィンガープリント(2026-07-28、一時的)。このブランチへのpushが実際にVercel本番へ
+// デプロイされているかをLLM課金なしで確認するための無料GETエンドポイント。
+// コスト検証が終わったら削除してよい。
+export async function GET() {
+  return NextResponse.json({ deployMarker: "sim-payload-trim-20260728-1" });
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ raceId: string }> },
