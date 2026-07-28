@@ -106,15 +106,22 @@ export async function screenRace(
   throw lastError;
 }
 
+export type StandardEffort = "low" | "medium" | "high";
+
 // 標準診断表生成 (Sonnet 5): 通常レースの診断表 (枠・馬番・ランク・全体分析など)。
+// effort省略時は"high"(本番のボタン・バッチと同じ挙動、後方互換)。バックテスト・
+// シミュレーション実行時のみ呼び出し側(route.tsの?effort=クエリ)で"medium"/"low"を
+// 明示的に渡すことでコストを下げられる(2026-07-28、thinkingの出力トークンが減り単価が下がる。
+// プロンプトの骨格・大枠を検証する目的では、必ずしもhigh effortのフル思考量は要らないという判断)。
 export async function diagnoseRaceStandard(
   input: RaceDiagnosisInput,
+  effort: StandardEffort = "high",
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
   const stream = anthropic.messages.stream({
     model: CLAUDE_MODELS.standard,
     max_tokens: 16000,
     thinking: { type: "adaptive" },
-    output_config: { effort: "high" },
+    output_config: { effort },
     system: STANDARD_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildStandardPayload(input) }],
   });
