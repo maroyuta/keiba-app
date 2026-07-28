@@ -517,6 +517,11 @@ export async function POST(
   // (本番のボタン・バッチと同じ挙動)。明示的に?effort=medium|lowを渡した時だけ安く済ませる
   const effortParam = new URL(request.url).searchParams.get("effort");
   const standardEffort = effortParam === "low" || effortParam === "medium" ? effortParam : "high";
+  // バックテスト・シミュレーション専用のプロンプト簡易版(2026-07-28)。省略時は"full"のまま
+  // (本番のボタン・バッチと同じCORE_RULES)。明示的に?mode=simulationを渡した時だけ、
+  // 個別事例の積み上げを省いた簡易版CORE_RULESに差し替えてthinkingの推論量を落とす
+  const modeParam = new URL(request.url).searchParams.get("mode");
+  const standardPromptMode = modeParam === "simulation" ? "simulation" : "full";
 
   const loaded = await loadRaceDiagnosisInput(supabase, raceId);
   if (!loaded) {
@@ -620,7 +625,7 @@ export async function POST(
   }
 
   // 標準診断 (Sonnet)。S評価が出ても自動ではOpusへ進まず、「本気診断」ボタンの手動実行に委ねる。
-  const diagnosis = await diagnoseRaceStandard(input, standardEffort);
+  const diagnosis = await diagnoseRaceStandard(input, standardEffort, standardPromptMode);
   await logUsage(supabase, raceId, "standard", diagnosis.usage);
   await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId, "standard");
 

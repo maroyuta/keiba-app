@@ -1,6 +1,7 @@
 import { anthropic, CLAUDE_MODELS, extractText } from "./client";
 import {
   STANDARD_SYSTEM_PROMPT,
+  SIMULATION_STANDARD_SYSTEM_PROMPT,
   PREMIUM_SYSTEM_PROMPT,
   SCREENING_SYSTEM_PROMPT,
   buildRaceDataPayload,
@@ -107,22 +108,31 @@ export async function screenRace(
 }
 
 export type StandardEffort = "low" | "medium" | "high";
+export type StandardPromptMode = "full" | "simulation";
 
 // 標準診断表生成 (Sonnet 5): 通常レースの診断表 (枠・馬番・ランク・全体分析など)。
 // effort省略時は"high"(本番のボタン・バッチと同じ挙動、後方互換)。バックテスト・
 // シミュレーション実行時のみ呼び出し側(route.tsの?effort=クエリ)で"medium"/"low"を
 // 明示的に渡すことでコストを下げられる(2026-07-28、thinkingの出力トークンが減り単価が下がる。
 // プロンプトの骨格・大枠を検証する目的では、必ずしもhigh effortのフル思考量は要らないという判断)。
+//
+// promptModeは省略時"full"(本番と同じSTANDARD_SYSTEM_PROMPT)。バックテスト・シミュレーション
+// 実行時のみ呼び出し側(route.tsの?mode=simulationクエリ)で"simulation"を渡すと、CORE_RULESを
+// 簡易版(SIMULATION_STANDARD_SYSTEM_PROMPT)に差し替え、プロンプト自体の分量を減らして
+// thinkingの推論量を落とす(2026-07-28。effort調整・出力コメント短縮の両方が実測で
+// コスト削減効果が乏しかったため、プロンプトの実質的な内容そのものを削る方向で対応)。
 export async function diagnoseRaceStandard(
   input: RaceDiagnosisInput,
   effort: StandardEffort = "high",
+  promptMode: StandardPromptMode = "full",
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
+  const system = promptMode === "simulation" ? SIMULATION_STANDARD_SYSTEM_PROMPT : STANDARD_SYSTEM_PROMPT;
   const stream = anthropic.messages.stream({
     model: CLAUDE_MODELS.standard,
     max_tokens: 16000,
     thinking: { type: "adaptive" },
     output_config: { effort },
-    system: STANDARD_SYSTEM_PROMPT,
+    system,
     messages: [{ role: "user", content: buildStandardPayload(input) }],
   });
   const message = await stream.finalMessage();
