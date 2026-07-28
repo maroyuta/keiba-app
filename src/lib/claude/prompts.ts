@@ -670,11 +670,17 @@ const OUTPUT_FORMAT_RULES = `## 出力形式
     {
       "horse_number": number,
       "horse_rank": "S" | "A" | "B" | "C",
-      "horse_rank_comment": string,  // 短評、1行
+      "horse_rank_comment": string,  // 短評(長さの目安は下記参照)
       "is_kesshi": boolean,
       "kesshi_reason": string | null
     }
-    // entries配列に含まれる全頭分を出力すること
+    // entries配列に含まれる全頭分を出力すること。
+    // ★2026-07-28追記(コスト削減): horse_rank_commentの長さに意図的にメリハリをつけること。
+    // 本命(honmei)・相手(aite)・horse_rank="S"の2頭・A評価・「危険な人気馬」に該当する馬は、
+    // 判断根拠が伝わる詳しい短評(従来通り)を書く。それ以外の当落線外(B/C評価で上記いずれにも
+    // 該当しない)馬は、詳しい説明を書かず「能力不足」「人気ほど信頼できない」等、一言〜一句程度の
+    // ごく短い短評に留めてよい(全頭を均等な長さで書く必要はない)。判断に関わる馬の記述の質は
+    // 一切落とさないこと — 削るのは「買わない・関係ない馬」の説明量だけ
   ],
   "honmei_horse_number": number | null,
   "aite_horse_number": number | null,
