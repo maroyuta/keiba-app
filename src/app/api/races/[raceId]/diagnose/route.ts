@@ -506,6 +506,13 @@ async function persistDiagnosis(
   }
 }
 
+// デバッグ用フィンガープリント(2026-07-28、一時的)。このブランチへのpushが実際にVercel本番へ
+// デプロイされているかをLLM課金なしで確認するための無料GETエンドポイント。
+// コスト検証が終わったら削除してよい。
+export async function GET() {
+  return NextResponse.json({ deployMarker: "sim-payload-trim-20260728-1" });
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ raceId: string }> },
@@ -513,6 +520,15 @@ export async function POST(
   const { raceId } = await context.params;
   const supabase = createAdminClient();
   const wantsPremium = new URL(request.url).searchParams.get("tier") === "premium";
+  // バックテスト・シミュレーション専用のコスト低減オプション(2026-07-28)。省略時は"high"のまま
+  // (本番のボタン・バッチと同じ挙動)。明示的に?effort=medium|lowを渡した時だけ安く済ませる
+  const effortParam = new URL(request.url).searchParams.get("effort");
+  const standardEffort = effortParam === "low" || effortParam === "medium" ? effortParam : "high";
+  // バックテスト・シミュレーション専用のプロンプト簡易版(2026-07-28)。省略時は"full"のまま
+  // (本番のボタン・バッチと同じCORE_RULES)。明示的に?mode=simulationを渡した時だけ、
+  // 個別事例の積み上げを省いた簡易版CORE_RULESに差し替えてthinkingの推論量を落とす
+  const modeParam = new URL(request.url).searchParams.get("mode");
+  const standardPromptMode = modeParam === "simulation" ? "simulation" : "full";
 
   const loaded = await loadRaceDiagnosisInput(supabase, raceId);
   if (!loaded) {
@@ -616,7 +632,7 @@ export async function POST(
   }
 
   // 標準診断 (Sonnet)。S評価が出ても自動ではOpusへ進まず、「本気診断」ボタンの手動実行に委ねる。
-  const diagnosis = await diagnoseRaceStandard(input);
+  const diagnosis = await diagnoseRaceStandard(input, standardEffort, standardPromptMode);
   await logUsage(supabase, raceId, "standard", diagnosis.usage);
   await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId, "standard");
 
