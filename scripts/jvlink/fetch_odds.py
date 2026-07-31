@@ -1,5 +1,5 @@
-"""JV-Linkの速報系API JVRTOpen を使い、指定レースの単勝・複勝・枠連オッズ(レコード種別"O1")を
-リアルタイム取得して保存する。
+"""JV-Linkの速報系API JVRTOpen を使い、指定レースの全賭式オッズ(レコード種別"O1"〜"O6":
+単勝・複勝・枠連・馬連・ワイド・馬単・3連複・3連単)をリアルタイム取得して保存する。
 
 fetch_raw.py が使う JVOpen(蓄積系、レース確定後のデータ)とは別のAPIで、発売開始後
 (金土日に随時更新)のオッズをレース単位でその場から取得できる。ダウンロード予約が不要な
@@ -9,6 +9,13 @@ race_keyのフォーマット: races.jv_race_key(12桁: 年4+場コード2+回2+
 RACE_ID構造体と同じ16桁(年4+月日4+場コード2+回2+日目2+レース番号2)。実機で
 JVRTOpen("0B31", "2026071203020611")が七夕賞(2026-07-12, 福島2回6日目11R)のO1レコードを
 実際に返すことを確認済み。
+
+⚠️2026-07-31: dataspec "0B31" は単勝・複勝・枠連(O1)しか返さないことが判明。ワイド・馬連等の
+組み合わせオッズも含めた全賭式を速報で取るには "0B30" を使う必要がある(JRA-VAN開発者コミュニティ
+https://developer.jra-van.jp/t/topic/227 、実機でも2026080107020301(中京1R)に対しJVRTOpenが
+O1〜O6全件を即座に返すことを確認済み)。0B30は1ファイルのみ返す(JVSkip不要)。
+そのため既定のdataspecを"0B30"に変更した。単勝オッズ(O1)のみ必要な場合も同じ呼び出しで
+副産物としてO2〜O6が付いてくるだけで、追加コストは発生しない(同一のJVRTOpen呼び出し1回分)。
 
 前提:
 - Windows PC上で32bit Pythonから実行すること (fetch_raw.pyと同じ制約)
@@ -30,7 +37,7 @@ from mojibake import fix_mojibake
 
 JVLINK_PROGID = "JVDTLab.JVLink"
 READ_BUFFER_SIZE = 300000
-ODDS_DATASPEC = "0B31"
+ODDS_DATASPEC = "0B30"
 
 
 def fetch_odds(race_key: str, out_dir: Path, apply_mojibake_fix: bool) -> None:

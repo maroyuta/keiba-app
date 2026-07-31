@@ -298,6 +298,63 @@ def _add_pay_group(d: dict, prefix: str, c: ByteCursor, count: int, combo_len: i
     _flatten_list(d, f"{prefix}_ninki", ninkis)
 
 
+def _parse_combo_odds(c: ByteCursor, count: int, kumiban_len: int, value_lens: dict) -> tuple:
+    """O2〜O6(組み合わせオッズ)共通の(組番, オッズ用の値N個, 人気順)の繰り返し項目を切り出す。
+    value_lensは["odds"]1個(馬連/馬単/3連複/3連単)か["odds_low","odds_high"]2個(ワイド)。
+    人気順の桁数はkumiban_len/value_lensの並びから一意に決まらないため、呼び出し側が
+    ByteCursorの残りバイト数から逆算して渡す(下記parse_o2/parse_o3参照)。
+    """
+    kumibans, values, ninkis = [], {name: [] for name in value_lens}, []
+    for _ in range(count):
+        kumibans.append(c.take(kumiban_len))
+        for name, length in value_lens.items():
+            values[name].append(c.take(length))
+        ninkis.append(c.take(3))
+    return kumibans, values, ninkis
+
+
+def _add_combo_odds(d: dict, prefix: str, c: ByteCursor, count: int, kumiban_len: int, value_lens: dict):
+    kumibans, values, ninkis = _parse_combo_odds(c, count, kumiban_len, value_lens)
+    _flatten_list(d, f"{prefix}_kumiban", kumibans)
+    for name, vals in values.items():
+        _flatten_list(d, f"{prefix}_{name}", vals)
+    _flatten_list(d, f"{prefix}_ninki", ninkis)
+
+
+def _parse_odds_header(c: ByteCursor, d: dict):
+    """O1〜O6共通のヘッダ(レコードID+レースID+発表時刻+登録頭数+出走頭数+発売フラグ1バイト)。
+    JVRTOpen("0B30", race_key)で実機検証済み(2026-07-31、O2/O3をwakuban=1618等の実在の
+    組み合わせ・人気順1位=最安オッズという整合性で検証)。"""
+    parse_record_id(c, d)
+    parse_race_id(c, d)
+    parse_mdhm(c, d, "happyo_time")
+    d["toroku_tosu"] = c.take(2)
+    d["syusso_tosu"] = c.take(2)
+    d["hatsubai_flag"] = c.take(1)
+
+
+def parse_o2(data: bytes) -> dict:
+    """JV_O2_ODDS_UMAREN(馬連オッズ)。JVRTOpen("0B30", race_key)の速報系レコード。
+    組番(馬番2桁+馬番2桁、昇順)が153件(最大18頭のC(18,2))固定で並ぶ。
+    """
+    c = ByteCursor(data)
+    d = {}
+    _parse_odds_header(c, d)
+    _add_combo_odds(d, "umaren", c, 153, 4, {"odds": 6})
+    return d
+
+
+def parse_o3(data: bytes) -> dict:
+    """JV_O3_ODDS_WIDE(ワイドオッズ)。JVRTOpen("0B30", race_key)の速報系レコード。
+    複勝と同様にオッズ下限・上限の2値を持つ。組番の並び・件数はparse_o2と同じ。
+    """
+    c = ByteCursor(data)
+    d = {}
+    _parse_odds_header(c, d)
+    _add_combo_odds(d, "wide", c, 153, 4, {"odds_low": 5, "odds_high": 5})
+    return d
+
+
 def parse_hr(data: bytes) -> dict:
     """JV_HR_PAY(払戻情報)。組番/馬番・払戻金(円)・人気順を賭式ごとにフラット化して格納する。"""
     c = ByteCursor(data)
@@ -375,6 +432,8 @@ def parse_sk(data: bytes) -> dict:
 PARSERS = {
     "RA": parse_ra,
     "SE": parse_se,
+    "O2": parse_o2,
+    "O3": parse_o3,
     "JG": parse_jg,
     "HR": parse_hr,
     "O1": parse_o1,

@@ -651,6 +651,56 @@ export type Database = {
           },
         ]
       }
+      race_odds_combinations: {
+        Row: {
+          bet_type: string
+          combination: string
+          created_at: string
+          data_source: string
+          id: string
+          odds: number | null
+          odds_high: number | null
+          odds_low: number | null
+          popularity: number | null
+          race_id: string
+          updated_at: string
+        }
+        Insert: {
+          bet_type: string
+          combination: string
+          created_at?: string
+          data_source?: string
+          id?: string
+          odds?: number | null
+          odds_high?: number | null
+          odds_low?: number | null
+          popularity?: number | null
+          race_id: string
+          updated_at?: string
+        }
+        Update: {
+          bet_type?: string
+          combination?: string
+          created_at?: string
+          data_source?: string
+          id?: string
+          odds?: number | null
+          odds_high?: number | null
+          odds_low?: number | null
+          popularity?: number | null
+          race_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "race_odds_combinations_race_id_fkey"
+            columns: ["race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       race_payouts: {
         Row: {
           bet_type: string
@@ -756,6 +806,7 @@ export type Database = {
       }
       races: {
         Row: {
+          actual_bias_note: string | null
           aite_horse_number: number | null
           aite_horse_number_2: number | null
           analysis_favorite: string | null
@@ -771,6 +822,8 @@ export type Database = {
           bias_note: string | null
           bias_reference_race_id: string | null
           created_at: string
+          diagnosis_progress_pct: number | null
+          diagnosis_progress_updated_at: string | null
           distance_m: number
           entry_count: number | null
           grade: string | null
@@ -798,6 +851,7 @@ export type Database = {
           weather: string | null
         }
         Insert: {
+          actual_bias_note?: string | null
           aite_horse_number?: number | null
           aite_horse_number_2?: number | null
           analysis_favorite?: string | null
@@ -813,6 +867,8 @@ export type Database = {
           bias_note?: string | null
           bias_reference_race_id?: string | null
           created_at?: string
+          diagnosis_progress_pct?: number | null
+          diagnosis_progress_updated_at?: string | null
           distance_m: number
           entry_count?: number | null
           grade?: string | null
@@ -840,6 +896,7 @@ export type Database = {
           weather?: string | null
         }
         Update: {
+          actual_bias_note?: string | null
           aite_horse_number?: number | null
           aite_horse_number_2?: number | null
           analysis_favorite?: string | null
@@ -855,6 +912,8 @@ export type Database = {
           bias_note?: string | null
           bias_reference_race_id?: string | null
           created_at?: string
+          diagnosis_progress_pct?: number | null
+          diagnosis_progress_updated_at?: string | null
           distance_m?: number
           entry_count?: number | null
           grade?: string | null
@@ -1006,6 +1065,102 @@ export type Database = {
             columns: ["horse_id"]
             isOneToOne: false
             referencedRelation: "horses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      win5_tickets: {
+        Row: {
+          actual_payout_yen: number | null
+          combinations: Json
+          computed_at: string | null
+          created_at: string
+          id: string
+          is_hit: boolean | null
+          leg_candidates: Json
+          leg1_race_id: string | null
+          leg2_race_id: string | null
+          leg3_race_id: string | null
+          leg4_race_id: string | null
+          leg5_race_id: string | null
+          note: string | null
+          race_date: string
+          stake_yen: number | null
+          target_payout_yen: number | null
+          total_points: number
+        }
+        Insert: {
+          actual_payout_yen?: number | null
+          combinations: Json
+          computed_at?: string | null
+          created_at?: string
+          id?: string
+          is_hit?: boolean | null
+          leg_candidates: Json
+          leg1_race_id?: string | null
+          leg2_race_id?: string | null
+          leg3_race_id?: string | null
+          leg4_race_id?: string | null
+          leg5_race_id?: string | null
+          note?: string | null
+          race_date: string
+          stake_yen?: number | null
+          target_payout_yen?: number | null
+          total_points: number
+        }
+        Update: {
+          actual_payout_yen?: number | null
+          combinations?: Json
+          computed_at?: string | null
+          created_at?: string
+          id?: string
+          is_hit?: boolean | null
+          leg_candidates?: Json
+          leg1_race_id?: string | null
+          leg2_race_id?: string | null
+          leg3_race_id?: string | null
+          leg4_race_id?: string | null
+          leg5_race_id?: string | null
+          note?: string | null
+          race_date?: string
+          stake_yen?: number | null
+          target_payout_yen?: number | null
+          total_points?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "win5_tickets_leg1_race_id_fkey"
+            columns: ["leg1_race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "win5_tickets_leg2_race_id_fkey"
+            columns: ["leg2_race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "win5_tickets_leg3_race_id_fkey"
+            columns: ["leg3_race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "win5_tickets_leg4_race_id_fkey"
+            columns: ["leg4_race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "win5_tickets_leg5_race_id_fkey"
+            columns: ["leg5_race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
             referencedColumns: ["id"]
           },
         ]
@@ -1183,6 +1338,7 @@ export type PipelineJobName =
   | "sync_netkeiba_recent"
   | "sync_netkeiba_shutuba";
 export type PipelineRunStatus = "running" | "success" | "failed";
+export type OddsCombinationBetType = "umaren" | "wide";
 
 // テーブル別Row型の別名 (Tables<"races"> 等の代わりに使える短縮形)
 export type RaceRow = Tables<"races">;
@@ -1199,3 +1355,4 @@ export type NickStatRow = Tables<"nick_stats">;
 export type ApiUsageLogRow = Tables<"api_usage_log">;
 export type RacePayoutRow = Tables<"race_payouts">;
 export type RaceRecommendationResultRow = Tables<"race_recommendation_results">;
+export type RaceOddsCombinationRow = Tables<"race_odds_combinations">;

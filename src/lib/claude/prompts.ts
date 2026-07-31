@@ -11,6 +11,7 @@ import type {
   RaceCriteriaScoreRow,
   PredictionCriteriaRow,
   RaceRank,
+  RaceOddsCombinationRow,
 } from "@/lib/supabase/database.types";
 
 export interface EntryDiagnosisInput {
@@ -38,6 +39,10 @@ export interface RaceDiagnosisInput {
   // ユーザー指摘によりSundayは土曜だけでなく先週分も参照するよう拡張)。実データがまだ蓄積されていない
   // (開催初週・運用開始直後等) 場合は空配列
   biasReferenceRaces: BiasReferenceRace[];
+  // ワイド・馬連の現在オッズ(組み合わせ単位、JV-Link JVRTOpen "0B30"由来、2026-07-31追加)。
+  // 発売開始前や取得タイミングによっては空配列になりうる(その場合は単勝オッズからの概算に
+  // フォールバックするようプロンプト側で指示している)。
+  oddsCombinations: RaceOddsCombinationRow[];
 }
 
 export interface DiagnosisEntryResult {
@@ -266,8 +271,9 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
 - 例: 単勝10倍(市場想定勝率10%)の馬が実力的に12%程度の勝率が見込めるなら、+2%のプラスの妙味がある
 - 例: 単勝5倍(市場想定勝率20%)の馬が実力的にちょうど20%程度の勝率しか見込めないなら、妙味は0で「妥当なオッズ」に過ぎない(その馬の方が絶対的な勝率・的中率自体は高くても、妙味では劣る)
 - 勝率・的中率の高さそのものではなく、この妙味(エッジ)が最大の馬を優先してaite(相手)を選ぶこと
-- ただし、渡されたデータに個別馬の単勝オッズ(odds_win)しかなくワイド/馬連の組み合わせオッズが含まれない場合、組み合わせの妙味は正確には判定できない。その場合は単勝オッズから大まかに類推するにとどめ、analysis_valueやbet_amount_wide/umarenの根拠に「組み合わせオッズは未取得のため単勝オッズからの概算」である旨を明記すること
-- analysis_valueには「過小評価されている」で終わらせず、市場想定勝率と実力の差(可能なら組み合わせオッズとの比較)という上記の妙味の考え方に基づいた具体的な根拠を書くこと
+- **渡されたデータのodds_combinationsに実際のワイド・馬連オッズ(組み合わせ・オッズ・人気順)が入っている場合は、必ずそちらを直接使って組み合わせ単位の妙味を判定すること。** 単勝オッズからの概算(単勝オッズの掛け算等)は組み合わせの実勢と乖離することが多いため、odds_combinationsがある場合はそちらを優先し、bet_type(bet_amount_wide/bet_amount_umarenの対象)に対応する実際のオッズ・人気順をanalysis_valueの根拠に明記すること
+- odds_combinationsが空、または本命/相手の組み合わせが含まれていない場合に限り、単勝オッズからの概算に留め、analysis_valueに「組み合わせオッズは未取得のため単勝オッズからの概算」である旨を明記すること
+- analysis_valueには「過小評価されている」で終わらせず、市場想定勝率と実力の差(odds_combinationsがあればその実際の組み合わせオッズとの比較)という上記の妙味の考え方に基づいた具体的な根拠を書くこと
 
 ## 軸(本命)とS評価(妙味候補)の役割分担 ★重要
 
@@ -826,6 +832,17 @@ function serializePedigreeStat(stat: SireStatRow | NickStatRow) {
   };
 }
 
+function serializeOddsCombination(oc: RaceOddsCombinationRow) {
+  return {
+    bet_type: oc.bet_type, // "umaren" | "wide"
+    combination: oc.combination, // 例 "3-8"
+    odds: oc.odds, // 馬連のみ
+    odds_low: oc.odds_low, // ワイドのみ(下限)
+    odds_high: oc.odds_high, // ワイドのみ(上限)
+    popularity: oc.popularity,
+  };
+}
+
 function serializeCriteriaScore(
   cs: { criteria: PredictionCriteriaRow; score: number | null; rank_mark: string | null; reason: string | null },
 ) {
@@ -869,6 +886,7 @@ export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
     })),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
     entries: input.entries.map(serializeEntry),
+    odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
   };
   return JSON.stringify(payload);
 }
@@ -932,6 +950,7 @@ export function buildStandardPayload(input: RaceDiagnosisInput): string {
     })),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
     entries: input.entries.map(serializeStandardEntry),
+    odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
   };
   return JSON.stringify(payload);
 }

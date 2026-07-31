@@ -390,6 +390,14 @@ async function loadRaceDiagnosisInput(
 
   const biasReferences = await findBiasReferenceRaces(supabase, race);
 
+  // ワイド・馬連の現在オッズ(組み合わせ単位、JV-Link JVRTOpen "0B30"由来、2026-07-31追加)。
+  // 発売開始前や取得タイミング次第では0件のこともあり、その場合はプロンプト側で単勝オッズ
+  // からの概算にフォールバックする。
+  const { data: oddsCombinations } = await supabase
+    .from("race_odds_combinations")
+    .select("*")
+    .eq("race_id", raceId);
+
   return {
     input: {
       race,
@@ -413,6 +421,7 @@ async function loadRaceDiagnosisInput(
         criteria: rc.prediction_criteria,
       })),
       biasReferenceRaces: biasReferences.map((r) => r.reference),
+      oddsCombinations: oddsCombinations ?? [],
     },
     // DBのbias_reference_race_id(単一FK)には、参照した中で最初の1件(日曜なら今週土曜、
     // 無ければ先週分)だけを記録する。プロンプトへは全件渡す。

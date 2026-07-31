@@ -21,10 +21,13 @@ run_weekly_sync.pyのout/を使い回す想定だったが、古い(前回同期
 上書きしてしまうリスクがあるため、このスクリプトでは意図的に空ファイルを渡す
 (0行なのでraces/horses/race_entriesへのupsertは発生せず、--o1-csv経由のオッズ更新のみ行われる)。
 
-⚠️Windows実機での検証はまだ行っていない(2026-07-13時点、Mac側での設計のみ)。
-次回Windows PC側のセッションで実際にJV-Link経由の疎通・タスクスケジューラ登録まで確認すること。
+✅ Windows実機で検証済み(2026-07-31)。2026-08-01開催36レース全件でfetch→parse→load
+(--o1/--o2/--o3-csv)がEXIT=0で成功し、race_entries.odds_win/expected_popularityと
+race_odds_combinations(馬連・ワイド)への反映を確認した。Windowsタスクスケジューラへの
+定期実行登録はまだ未実施(次回、発売時間帯に合わせた間隔で登録すること)。
 """
 
+import argparse
 import datetime
 import json
 import os
@@ -115,6 +118,10 @@ def fetch_odds_for_race(race_key: str, log) -> bool:
                 str(ENV_FILE),
                 "--o1-csv",
                 str(work_dir / "O1_parsed.csv"),
+                "--o2-csv",
+                str(work_dir / "O2_parsed.csv"),
+                "--o3-csv",
+                str(work_dir / "O3_parsed.csv"),
             ],
             check=True,
             cwd=SCRIPT_DIR,
@@ -128,6 +135,13 @@ def fetch_odds_for_race(race_key: str, log) -> bool:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="JVRTOpenで指定日の全レースのオッズを取得・反映する")
+    parser.add_argument(
+        "--date",
+        help="対象レース日(YYYY-MM-DD)。省略時は実行時点の日付(本来の運用=当日発走前ウォッチ用)",
+    )
+    args = parser.parse_args()
+
     env = {**os.environ, **load_env_file(ENV_FILE)}
     supabase_url = env.get("NEXT_PUBLIC_SUPABASE_URL")
     service_key = env.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -140,20 +154,20 @@ def main() -> None:
         sys.exit(1)
 
     now = datetime.datetime.now()
-    today = now.date().isoformat()
+    target_date = args.date or now.date().isoformat()
 
     LOG_DIR.mkdir(exist_ok=True)
     OUT_ROOT.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"odds_watch_{now:%Y%m%d_%H%M%S}.log"
 
     try:
-        races = fetch_today_races(supabase_url, service_key, today)
+        races = fetch_today_races(supabase_url, service_key, target_date)
     except urllib.error.HTTPError as e:
         print(f"races取得失敗 ({e.code}): {e.read().decode('utf-8', errors='replace')}", file=sys.stderr)
         sys.exit(1)
 
     with open(log_path, "w", encoding="utf-8") as log:
-        print(f"[開始] {now} race_date={today} 対象レース候補={len(races)}件", file=log, flush=True)
+        print(f"[開始] {now} race_date={target_date} 対象レース候補={len(races)}件", file=log, flush=True)
         processed = 0
         for race in races:
             post_time = race.get("post_time")
@@ -162,7 +176,7 @@ def main() -> None:
                 continue
 
             post_dt = datetime.datetime.combine(
-                datetime.date.fromisoformat(today), datetime.time.fromisoformat(post_time[:8])
+                datetime.date.fromisoformat(target_date), datetime.time.fromisoformat(post_time[:8])
             )
             if now >= post_dt:
                 # 発走済みのレースは対象外(締切後のオッズ取得は意味がない)

@@ -185,6 +185,24 @@ python load_to_supabase.py out/RA_parsed.csv out/SE_parsed.csv --env-file .env.j
 - 時系列でのオッズ変動追跡(発売開始直後→直前でどう動いたか)は未対応。`load_to_supabase.py`は
   現在値で`race_entries`を上書きするのみ
 
+**⚠️2026-07-31: dataspec"0B31"は単勝・複勝・枠連(O1)専用で、馬連・ワイド等は返さないと判明。**
+全賭式(O1〜O6)を速報で取るには`"0B30"`を使う必要がある([JRA-VAN開発者コミュニティ](https://developer.jra-van.jp/t/topic/227))。
+`ODDS_DATASPEC`を`"0B30"`に変更済み(1ファイルのみ返るためJVSkip不要、既存実装のまま動作)。
+
+## parse_o2/parse_o3 (馬連・ワイドの組み合わせオッズ、2026-07-31追加)
+
+`fetch_odds.py`が`"0B30"`で取得するO2(馬連)/O3(ワイド)のバイトオフセットは、公式spec文書が
+手元に無いため実データから逆算した。組番の昇順並び・人気順1位=最安オッズ・レコード長の
+一致(いずれも18頭フルフィールド分の固定長スロット、馬連/ワイドはC(18,2)=153組)で検証済み。
+詳細な検証手順とO4/O5/O6(未実装)の構造はAGENTS.mdの「JV-Link経由の馬連・ワイド実装」を参照。
+
+`load_to_supabase.py --o2-csv --o3-csv`で新規テーブル`race_odds_combinations`
+(`race_id, bet_type, combination`でupsert)へ反映する。`run_odds_watch.py`は
+`--o1-csv`と同じ呼び出しに`--o2-csv`/`--o3-csv`を追加済み。
+
+**実機検証(2026-07-31、2026-08-01開催36レース全件で成功):** 中京1Rで馬連の1番人気combo
+(3-8)がodds=6.0倍等、人気順とオッズが単調増加する関係になっていることを確認。
+
 ## run_odds_watch.py (レース前オッズの定期実行オーケストレーター、2026-07-13追加、Windows未検証)
 
 `run_weekly_sync.py`と同じ役割分担で、fetch_odds.pyの「当日朝〜発売開始後、繰り返し呼ぶ

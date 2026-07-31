@@ -345,6 +345,42 @@ def build_payout_payloads(row: dict, race_id: str) -> list:
     return payloads
 
 
+def build_combo_odds_payloads(
+    row: dict, race_id: str, prefix: str, bet_type: str, count: int, has_range: bool
+) -> list:
+    """O2_parsed.csv(馬連)/O3_parsed.csv(ワイド)の1行から、race_odds_combinationsへの
+    upsert用payloadを組み立てる。オッズは10倍値で格納されている(O1のtansho_oddsと同じ
+    スケール、scripts/jvlink/parse_records.pyのparse_o2/parse_o3参照)。
+    馬連(has_range=False)はoddsのみ、ワイド(has_range=True)はodds_low/odds_highを使う。
+    """
+    payloads = []
+    for i in range(1, count + 1):
+        combination = _format_combination(row.get(f"{prefix}_kumiban{i}", ""), 2, 2)
+        if combination is None:
+            continue
+        payload = {
+            "race_id": race_id,
+            "bet_type": bet_type,
+            "combination": combination,
+            "popularity": to_int(row.get(f"{prefix}_ninki{i}", "")),
+            "data_source": "jv_link",
+        }
+        if has_range:
+            odds_low = to_float_scaled(row.get(f"{prefix}_odds_low{i}", ""), 10)
+            odds_high = to_float_scaled(row.get(f"{prefix}_odds_high{i}", ""), 10)
+            if odds_low is None and odds_high is None:
+                continue
+            payload["odds_low"] = odds_low
+            payload["odds_high"] = odds_high
+        else:
+            odds = to_float_scaled(row.get(f"{prefix}_odds{i}", ""), 10)
+            if odds is None:
+                continue
+            payload["odds"] = odds
+        payloads.append(payload)
+    return payloads
+
+
 def dedupe_by_key(payloads: list, key_fn) -> list:
     """同じconflictキーが1バッチ内に複数あるとPostgRESTのON CONFLICTがエラーになるため、
     最後に出現したものを採用して重複を除く(JV-Dataは同じレースを複数回送ってくることがある)。"""
@@ -416,6 +452,16 @@ def main() -> None:
         "--o1-csv",
         help="O1_parsed.csv(単勝・複勝・枠連オッズ、JVRTOpen由来)のパス。"
         "指定時はrace_entries.odds_win/expected_popularityを更新する",
+    )
+    parser.add_argument(
+        "--o2-csv",
+        help="O2_parsed.csv(馬連オッズ、JVRTOpen \"0B30\"由来)のパス。"
+        "指定時はrace_odds_combinationsへupsertする",
+    )
+    parser.add_argument(
+        "--o3-csv",
+        help="O3_parsed.csv(ワイドオッズ、JVRTOpen \"0B30\"由来)のパス。"
+        "指定時はrace_odds_combinationsへupsertする",
     )
     parser.add_argument(
         "--hn-csv",
@@ -583,6 +629,55 @@ def main() -> None:
                 f"[race_entries odds] {odds_updated}頭分 更新完了 (race未特定でスキップ={odds_skipped_no_race})",
                 file=sys.stderr,
             )
+
+    for csv_path, prefix, bet_type, count, has_range in (
+        (args.o2_csv, "umaren", "umaren", 153, False),
+        (args.o3_csv, "wide", "wide", 153, True),
+    ):
+        if not csv_path:
+            continue
+        if not os.path.exists(csv_path):
+            print(f"[race_odds_combinations] {csv_path} が見つからないためスキップ", file=sys.stderr)
+            continue
+
+        with open(csv_path, encoding="utf-8") as f:
+            combo_rows = list(csv.DictReader(f))
+        print(f"[読み込み] {prefix.upper()}={len(combo_rows)}件", file=sys.stderr)
+
+        missing_keys = {build_jv_race_key(r) for r in combo_rows} - race_id_by_key.keys()
+        if missing_keys:
+            lookup = client.select(
+                "races",
+                {
+                    "jv_race_key": f"in.({','.join(sorted(missing_keys))})",
+                    "select": "id,jv_race_key",
+                },
+            )
+            for r in lookup:
+                race_id_by_key[r["jv_race_key"]] = r["id"]
+
+        combo_payloads = []
+        combo_skipped = 0
+        for row in combo_rows:
+            race_id = race_id_by_key.get(build_jv_race_key(row))
+            if not race_id:
+                combo_skipped += 1
+                continue
+            combo_payloads.extend(
+                build_combo_odds_payloads(row, race_id, prefix, bet_type, count, has_range)
+            )
+
+        combo_payloads = dedupe_by_key(
+            combo_payloads, lambda p: (p["race_id"], p["bet_type"], p["combination"])
+        )
+        combo_results = client.upsert(
+            "race_odds_combinations", combo_payloads, on_conflict="race_id,bet_type,combination"
+        )
+        print(
+            f"[race_odds_combinations/{bet_type}] {len(combo_results)}件 upsert完了 "
+            f"(race未特定でスキップ={combo_skipped})",
+            file=sys.stderr,
+        )
 
     if args.hn_csv and args.sk_csv:
         if not os.path.exists(args.hn_csv) or not os.path.exists(args.sk_csv):
