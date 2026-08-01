@@ -612,8 +612,12 @@ const OUTPUT_FORMAT_RULES = `## 出力形式
   "bet_amount_wide_2": number | null,   // aite_horse_number_2が設定されている場合のみ。それ以外はnull
   "bet_amount_umaren_2": number | null,
   "analysis_level": string,     // 1. レース全体のレベル・層の厚さ
-  "analysis_favorite": string,  // 2. 本命が堅い/危ない理由
-  "analysis_rival": string,     // 3. 相手の根拠
+  "analysis_favorite": string,  // 2. 本命の根拠。**良い点だけでなく不安要素・リスクも必ず併記すること**
+                                 // (2026-08-01、ユーザー指摘。読み手が自分で買う/見送るを判断できるよう、
+                                 // 都合の良い情報だけを並べた一方的な後押しにしないこと)
+  "analysis_rival": string,     // 3. 相手の根拠。同様に**良い点とリスクの両方**を書くこと(不安要素が
+                                 // 本当に無いと判断した場合のみ「特筆すべき不安材料なし」と明言してよいが、
+                                 // 探さずに省略するのは不可)
   "analysis_value": string,     // 4. 妙味馬 (過小評価馬) が出る理由
   "analysis_pace": string,      // 5. ペース・展開想定 (前残り/差し決着のどちらが有力かを明言する)
   "suggested_criteria": [
