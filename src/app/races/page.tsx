@@ -198,7 +198,10 @@ export default async function RacesPage({
   // 全開催日を1ページにまとめて表示する(週末2日分をいちいち日付切り替えせず俯瞰したいという要望)。
   // dateが指定された場合は従来通り単日ドリルダウン(過去日の閲覧・前日/次日ナビゲーション用)。
   if (!date) {
-    const today = new Date().toISOString().slice(0, 10);
+    // JST基準で「今日」を計算する。new Date().toISOString()はUTCのため、JST深夜(0時〜9時)は
+    // 前日のまま判定されてしまい、日曜になっても土曜の開催が表示され続けるバグがあった
+    // (2026-08-02、ユーザー指摘)。JRAのレースは日本時間基準なのでJSTで固定する。
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const { data: upcoming } = await supabase
       .from("races")
       .select(
