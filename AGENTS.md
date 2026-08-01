@@ -6,6 +6,27 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
+## 📊 実況トラックバイアス(actual_bias_note)を初めて計算・配線 (2026-08-01)
+
+`races.actual_bias_note`列はスキーマに存在するのに、書き込むコードも読むコードも一切無かった
+(ユーザー指摘で発覚)。それまで`findBiasReferenceRaces`(diagnose route.ts)が参照レースとして
+渡していたのは`bias_note`(=AIが**診断時点で書いた予測**バイアス)のみで、「予測を参照して次の予測を
+書く」形になり誤差が積み重なるリスクがあった。
+
+**今回やったこと:**
+- 2026-08-01開催34レース分について、`race_entries.post_position`(枠、1-8)×`finish_position`と
+  `races.entry_count`から、1-4枠 vs 5-8枠の平均着順%を集計し、`actual_bias_note`へ一括反映(SQL一発、
+  Supabase MCP経由)。**⚠️post_positionは馬番(umaban)ではなく枠番(wakuban、1-8固定)である点に注意**
+  (最初entry_count/2を閾値にして失敗した — 頭数16以上のレースで全頭が「内枠」判定になるバグを踏んだ)
+- `src/app/api/races/[raceId]/diagnose/route.ts`の`findBiasReferenceRaces`を、`actual_bias_note`が
+  あればそちらを優先し、無ければ従来通り`bias_note`にフォールバックするよう修正
+
+**未対応(次回以降):** 今回は手動SQLでの一括バックフィルのみ。今後の開催日について毎回自動で
+`actual_bias_note`を計算する仕組み(バッチ)は無い。`compute_recommendation_results.py`や
+`sync:netkeiba:payouts`と同じタイミング(レース確定後)で回す新しいステップとして追加を検討すること。
+また今回の集計は枠(post_position)のみの単純指標で、脚質(先行/差し、corner_positions)は含んでいない
+(race_entriesにcorner_positionsを保存する仕組みが無いため。past_performances同様に持たせるかは今後の検討)。
+
 ## 🎯 JV-Link経由の馬連・ワイド(組み合わせオッズ)を実装 (2026-07-31)
 
 `race_entries.odds_win`(単勝)はJVRTOpen("0B31")経由で反映済みだったが、CORE_RULESの
