@@ -120,6 +120,75 @@ function enforcePopularityGuard(
   };
 }
 
+// 馬券方針「昇級戦(今回のクラスで初めて走る馬)はaite候補にしない、原則除外」(prompts.ts参照、
+// 2026-08-02追加)はこれまでプロンプト上の指示のみで、コード側のenforcementが無かった。実際に
+// 未勝利上がり(直近の過去走が全て未勝利/新馬のみ)の馬がaiteに選ばれる違反が発生したため、
+// MAX_BET_POPULARITY同様に書き込み直前の機械チェックを追加する。honmei側はプロンプト上「圧倒的な
+// 内容なら例外」を許容する設計のため、この機械チェックはaiteのみを対象にする(honmeiは対象外)。
+// 判定はrace_class同士の一般的な序列比較ではなく、「取得済みの過去走(直近最大5走)が1件以上あり、
+// その全てが未勝利/新馬で、かつ今回のrace_classが未勝利/新馬ではない」という狭いが確実なパターンに
+// 限定する(past_performances.race_classが未収録のため、race_name文字列でのマッチに依る制約)。
+const MAIDEN_TIER_PATTERN = /未勝利|新馬/;
+
+function isClassUpDebut(input: RaceDiagnosisInput, horseNumber: number): boolean {
+  if (input.race.race_class && MAIDEN_TIER_PATTERN.test(input.race.race_class)) {
+    return false;
+  }
+  const entry = input.entries.find((e) => e.entry.horse_number === horseNumber);
+  if (!entry || entry.pastPerformances.length === 0) return false;
+  return entry.pastPerformances.every(
+    (pp) => !!pp.race_name && MAIDEN_TIER_PATTERN.test(pp.race_name),
+  );
+}
+
+function enforceClassUpGuard(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  let updated = result;
+  const notes: string[] = [];
+
+  if (updated.aite_horse_number !== null && isClassUpDebut(input, updated.aite_horse_number)) {
+    // 相手(1人目)は「本命→相手」の買い目そのものの片方であり、代わりの相手候補をコード側で
+    // 選び直すことはできないため、enforcePopularityGuardの主要組み合わせ違反と同様に
+    // honmei側も含めて買い目全体を見送りにする(honmei単体だけがUIに残る中途半端な状態を避ける)。
+    notes.push(`相手${updated.aite_horse_number}番`);
+    updated = {
+      ...updated,
+      honmei_horse_number: null,
+      aite_horse_number: null,
+      aite_horse_number_2: null,
+      bet_type: null,
+      bet_amount_wide: null,
+      bet_amount_umaren: null,
+      bet_amount_wide_2: null,
+      bet_amount_umaren_2: null,
+    };
+  }
+
+  if (updated.aite_horse_number_2 !== null && isClassUpDebut(input, updated.aite_horse_number_2)) {
+    notes.push(`相手2 ${updated.aite_horse_number_2}番`);
+    updated = {
+      ...updated,
+      aite_horse_number_2: null,
+      bet_amount_wide_2: null,
+      bet_amount_umaren_2: null,
+    };
+  }
+
+  if (notes.length === 0) {
+    return result;
+  }
+
+  console.warn(
+    `[class-up-guard] race ${notes.join("、")}が昇級戦(過去走が未勝利/新馬のみ)のため相手候補から機械的に除外`,
+  );
+  return {
+    ...updated,
+    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${notes.join("、")}は過去走が全て未勝利/新馬のみ(今回が上位クラスへの昇級初戦)のため、機械的に相手候補から除外した。`,
+  };
+}
+
 // トラックバイアスはその時の馬場状態次第のため、直近の実データを根拠にする。
 // - 日曜のレース: [今週土曜の同場, 先週の同場] の最大2件を参照 (2026-07-13、ユーザー指摘により
 //   土曜だけでなく先週分も追加。片方だけしか見つからない場合はあるものだけ返す)
@@ -467,7 +536,7 @@ async function persistDiagnosis(
   biasReferenceRaceId: string | null,
   tier: UsageLogTier,
 ): Promise<void> {
-  const result = enforcePopularityGuard(input, rawResult);
+  const result = enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult));
   await supabase
     .from("races")
     .update({
