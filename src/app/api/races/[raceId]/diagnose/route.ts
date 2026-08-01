@@ -132,13 +132,16 @@ async function findBiasReferenceRaces(
   const raceDate = new Date(`${race.race_date}T00:00:00Z`);
   const dayOfWeek = raceDate.getUTCDay(); // 0=日, 6=土
 
+  // actual_bias_note(post_position×finish_positionの実況集計、2026-08-01追加)がある場合は
+  // bias_note(AIが診断時点で書いた"予測"バイアス)より優先する。過去の予測を参照レースとして
+  // 積み上げると「予測の予測」で誤差が蓄積するため、実際に何が起きたかを優先的に使う。
   async function findMostRecentBefore(beforeDate: string) {
     const { data } = await supabase
       .from("races")
-      .select("id, race_date, track_condition, bias_note")
+      .select("id, race_date, track_condition, bias_note, actual_bias_note")
       .eq("keibajo_code", race.keibajo_code)
       .neq("id", race.id)
-      .not("bias_note", "is", null)
+      .or("bias_note.not.is.null,actual_bias_note.not.is.null")
       .lt("race_date", beforeDate)
       .order("race_date", { ascending: false })
       .limit(1)
@@ -149,23 +152,29 @@ async function findBiasReferenceRaces(
   async function findExact(dateStr: string) {
     const { data } = await supabase
       .from("races")
-      .select("id, race_date, track_condition, bias_note")
+      .select("id, race_date, track_condition, bias_note, actual_bias_note")
       .eq("keibajo_code", race.keibajo_code)
       .neq("id", race.id)
       .eq("race_date", dateStr)
-      .not("bias_note", "is", null)
+      .or("bias_note.not.is.null,actual_bias_note.not.is.null")
       .limit(1)
       .maybeSingle();
     return data;
   }
 
-  function toResult(data: { id: string; race_date: string; track_condition: string | null; bias_note: string | null }) {
+  function toResult(data: {
+    id: string;
+    race_date: string;
+    track_condition: string | null;
+    bias_note: string | null;
+    actual_bias_note: string | null;
+  }) {
     return {
       id: data.id,
       reference: {
         raceDate: data.race_date,
         trackCondition: data.track_condition,
-        biasNote: data.bias_note,
+        biasNote: data.actual_bias_note ?? data.bias_note,
       },
     };
   }
