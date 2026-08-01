@@ -48,8 +48,12 @@ async function findAdjacentDate(
 }
 
 // 他の競馬サイト(netkeiba等)の並びに合わせるための開催場の表示順。
+// netkeibaの並びは開催場コード順ではなく週替わりの独自順のため、観測した組み合わせを都度追記する。
 // ここに無い開催場コードは末尾にkeibajo_code昇順で並ぶ。
-const VENUE_DISPLAY_ORDER = ["03", "10", "02"]; // 福島, 小倉, 函館
+const VENUE_DISPLAY_ORDER = [
+  "03", "10", "02", // 福島, 小倉, 函館
+  "04", "07", "01", // 新潟, 中京, 札幌 (2026-08-01週、netkeibaで確認)
+];
 
 function groupByVenue(rows: Race[]): Race[][] {
   const venueGroups = new Map<string, Race[]>();
