@@ -194,94 +194,16 @@ export default async function RacesPage({
   const { date } = await searchParams;
   const supabase = createAdminClient();
 
-  // dateが明示されていない場合は「今週まとめて見る」ビュー: 今日以降に登録されている
-  // 全開催日を1ページにまとめて表示する(週末2日分をいちいち日付切り替えせず俯瞰したいという要望)。
-  // dateが指定された場合は従来通り単日ドリルダウン(過去日の閲覧・前日/次日ナビゲーション用)。
-  if (!date) {
-    // JST基準で「今日」を計算する。new Date().toISOString()はUTCのため、JST深夜(0時〜9時)は
-    // 前日のまま判定されてしまい、日曜になっても土曜の開催が表示され続けるバグがあった
-    // (2026-08-02、ユーザー指摘)。JRAのレースは日本時間基準なのでJSTで固定する。
-    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const { data: upcoming } = await supabase
-      .from("races")
-      .select(
-        "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank, premium_diagnosed_at",
-      )
-      .gte("race_date", today)
-      .order("race_date", { ascending: true })
-      .order("keibajo_code", { ascending: true })
-      .order("race_number", { ascending: true });
-
-    let rows = (upcoming ?? []) as Race[];
-    let usingFallback = false;
-
-    // 今日以降のレースが1件も無い場合(開催と開催の谷間等)は、直近の過去開催を表示する
-    if (rows.length === 0) {
-      const { data: latest } = await supabase
-        .from("races")
-        .select("race_date")
-        .order("race_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (latest?.race_date) {
-        const { data: fallback } = await supabase
-          .from("races")
-          .select(
-            "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank, premium_diagnosed_at",
-          )
-          .eq("race_date", latest.race_date)
-          .order("keibajo_code", { ascending: true })
-          .order("race_number", { ascending: true });
-        rows = (fallback ?? []) as Race[];
-        usingFallback = true;
-      }
-    }
-
-    const dateGroups = new Map<string, Race[]>();
-    for (const race of rows) {
-      if (!dateGroups.has(race.race_date)) dateGroups.set(race.race_date, []);
-      dateGroups.get(race.race_date)!.push(race);
-    }
-
-    return (
-      <div className="min-h-screen bg-[#0b1a17] bg-[radial-gradient(circle_at_20%_0%,rgba(255,159,28,0.08),transparent_45%)] text-[#f2efe6]">
-        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6">
-          <div className="flex items-center justify-between gap-2">
-            <h1 className="text-xl font-bold text-[#f2efe6]">
-              {usingFallback ? "直近のレース" : "今週のレース"}
-            </h1>
-            <span className="text-xs text-[#f2efe6]/45">単日ごとに見る場合は各日付見出しをタップ</span>
-          </div>
-
-          {dateGroups.size === 0 ? (
-            <p className="text-sm text-[#f2efe6]/45">登録されているレースがありません。</p>
-          ) : (
-            [...dateGroups.entries()].map(([raceDate, dateRows]) => {
-              const dateLabel = new Date(`${raceDate}T00:00:00Z`).toLocaleDateString("ja-JP", {
-                month: "long",
-                day: "numeric",
-                weekday: "short",
-                timeZone: "UTC",
-              });
-              return (
-                <div key={raceDate} className="flex flex-col gap-3">
-                  <Link
-                    href={`/races?date=${raceDate}`}
-                    className="inline-flex w-fit items-center gap-1.5 border-b border-[#ff9f1c]/40 pb-1 text-sm font-semibold text-[#ff9f1c] transition-colors hover:text-[#ffb44d]"
-                  >
-                    {dateLabel}
-                  </Link>
-                  <DateGrid dateRows={dateRows} />
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  const targetDate = date;
+  // dateが明示されていない場合は「今日」だけを表示する単日ビュー。
+  // 以前は「今日以降の全開催日をまとめて1ページに表示」する設計だったが、日曜にアクセスしても
+  // 土曜分がページ上部に残り続け、わざわざスクロールしないと日曜のレースにたどり着けず
+  // 紛らわしいとの指摘を受け(2026-08-02)、単日ドリルダウン(dateありの場合と同じ表示・
+  // 前日/次日ナビゲーション付き)に統一した。他日を見たい場合は「次→」で1日ずつ送る。
+  // JST基準で「今日」を計算する。new Date().toISOString()はUTCのため、JST深夜(0時〜9時)は
+  // 前日のまま判定されてしまうバグが以前あったため、JSTで固定する。
+  const todayJst = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const explicitDate = !!date;
+  const targetDate = date ?? todayJst;
 
   const { data: races } = await supabase
     .from("races")
@@ -292,14 +214,41 @@ export default async function RacesPage({
     .order("keibajo_code", { ascending: true })
     .order("race_number", { ascending: true });
 
-  const rows = (races ?? []) as Race[];
+  let rows = (races ?? []) as Race[];
+  let effectiveDate = targetDate;
+  let usingFallback = false;
+
+  // dateが明示されていない(=「今日」を見に来た)のに今日のレースが1件も無い場合
+  // (開催と開催の谷間、または今日が非開催日等)は、直近の開催日を代わりに表示する。
+  // 明示的にdateを指定して「この日は無い」場合はそのまま空表示にする(過去日ナビゲーションの挙動を壊さないため)。
+  if (rows.length === 0 && !explicitDate) {
+    const { data: latest } = await supabase
+      .from("races")
+      .select("race_date")
+      .order("race_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest?.race_date) {
+      const { data: fallback } = await supabase
+        .from("races")
+        .select(
+          "id, keibajo_code, keibajo_name, kaiji, nichiji, race_number, race_date, post_time, race_name, grade, race_class, track_type, distance_m, weather, track_condition, entry_count, race_rank, premium_diagnosed_at",
+        )
+        .eq("race_date", latest.race_date)
+        .order("keibajo_code", { ascending: true })
+        .order("race_number", { ascending: true });
+      rows = (fallback ?? []) as Race[];
+      effectiveDate = latest.race_date;
+      usingFallback = true;
+    }
+  }
 
   const [prevDate, nextDate] = await Promise.all([
-    findAdjacentDate(supabase, targetDate, "prev"),
-    findAdjacentDate(supabase, targetDate, "next"),
+    findAdjacentDate(supabase, effectiveDate, "prev"),
+    findAdjacentDate(supabase, effectiveDate, "next"),
   ]);
 
-  const dateLabel = new Date(`${targetDate}T00:00:00Z`).toLocaleDateString("ja-JP", {
+  const dateLabel = new Date(`${effectiveDate}T00:00:00Z`).toLocaleDateString("ja-JP", {
     month: "long",
     day: "numeric",
     weekday: "short",
@@ -310,10 +259,14 @@ export default async function RacesPage({
     <div className="min-h-screen bg-[#0b1a17] bg-[radial-gradient(circle_at_20%_0%,rgba(255,159,28,0.08),transparent_45%)] text-[#f2efe6]">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
         <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-bold text-[#f2efe6]">レース一覧</h1>
-          <Link href="/races" className="text-xs text-[#ff9f1c] hover:text-[#ffb44d]">
-            ← 今週まとめて見る
-          </Link>
+          <h1 className="text-xl font-bold text-[#f2efe6]">
+            {usingFallback ? "直近のレース" : !explicitDate ? "今日のレース" : "レース一覧"}
+          </h1>
+          {explicitDate && effectiveDate !== todayJst && (
+            <Link href="/races" className="text-xs text-[#ff9f1c] hover:text-[#ffb44d]">
+              今日に戻る →
+            </Link>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#f2efe6]/10 bg-[#12241f] px-3 py-2">
