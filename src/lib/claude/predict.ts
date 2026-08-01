@@ -112,7 +112,11 @@ export async function diagnoseRaceStandard(
 ): Promise<{ result: DiagnosisResult; usage: UsageInfo }> {
   const stream = anthropic.messages.stream({
     model: CLAUDE_MODELS.standard,
-    max_tokens: 16000,
+    // 2026-08-02: 大頭数レース(札幌4R)でJSON途中切れ(Unterminated string)が再発。
+    // 同日にCORE_RULESへanalysis_favorite/analysis_rivalの良い点・リスク両論併記を必須化する等
+    // 出力を増やす変更を入れたため、16000では不足するケースが出てきたと見て余裕を持たせた。
+    // max_tokensは天井であり実際の課金は使用トークン数のみに基づくため、上げること自体に追加コストは無い。
+    max_tokens: 24000,
     thinking: { type: "adaptive" },
     output_config: { effort: "high" },
     system: STANDARD_SYSTEM_PROMPT,
