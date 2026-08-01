@@ -147,11 +147,33 @@ function isEarlyClassUp(input: RaceDiagnosisInput, horseNumber: number): boolean
   return nonMaidenStarts <= MAX_NON_MAIDEN_STARTS_FOR_GUARD;
 }
 
+// honmei/aiteに選ばれたかどうかに関わらず、出走馬一覧のカード自体にも昇級初戦・2戦目である旨を
+// 表示する(2026-08-02、ユーザーが「全頭診断を参考に自分で買い目を組んだ」際に、見送りにした馬が
+// horse_rank="S"のまま何の注記も無く表示され、結局その馬を買ってしまった事故を受けて追加)。
+// race_rank_reasonへの注記だけでは出走馬カード単体を見た時に伝わらないため、該当馬自身の
+// horse_rank_commentにも警告を追記する。
+function annotateClassUpEntries(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  let annotatedAny = false;
+  const entries = result.entries.map((entry) => {
+    if (!isEarlyClassUp(input, entry.horse_number)) return entry;
+    annotatedAny = true;
+    return {
+      ...entry,
+      horse_rank_comment: `⚠️昇級初戦・2戦目(今回のクラスでの実績${MAX_NON_MAIDEN_STARTS_FOR_GUARD}走以下)のため軸・相手として非推奨。${entry.horse_rank_comment}`,
+    };
+  });
+  if (!annotatedAny) return result;
+  return { ...result, entries };
+}
+
 function enforceClassUpGuard(
   input: RaceDiagnosisInput,
   result: DiagnosisResult,
 ): DiagnosisResult {
-  let updated = result;
+  let updated = annotateClassUpEntries(input, result);
   const notes: string[] = [];
 
   // honmei/aite(1人目)のどちらかが昇級初戦・2戦目に該当する場合は、買い目全体(honmei込み)を
@@ -187,7 +209,9 @@ function enforceClassUpGuard(
   }
 
   if (notes.length === 0) {
-    return result;
+    // honmei/aiteの見送り自体は発生しなかった場合でも、annotateClassUpEntriesによる
+    // 出走馬カードへの注記(updated)は活かして返す(resultに巻き戻さない)。
+    return updated;
   }
 
   console.warn(
