@@ -223,6 +223,29 @@ function enforceClassUpGuard(
   };
 }
 
+// 馬連はワイドよりオッズが高くなりやすい=的中率が低いため、馬連への配分を大きくしすぎない
+// (2026-08-02、ユーザー指摘: 「馬連はほぼ当たらないので500円でほぼ固定、残りはワイドに」という
+// 指示が過去にあったが、prompts.tsには「払戻額を揃える」という別の計算方式しか反映されておらず、
+// 実際に馬連1,600円/1,900円のような配分が出ていた=指示が実装に反映されていなかった)。
+// LLMに毎回按分計算をさせず、コード側で単純な固定配分として強制する。
+const UMAREN_FIXED_AMOUNT = 500;
+const BET_BUDGET_PER_AITE = 5000;
+
+function applyFixedBetSplit(result: DiagnosisResult): DiagnosisResult {
+  const updated = { ...result };
+  if (updated.bet_type === "both") {
+    if (updated.aite_horse_number !== null) {
+      updated.bet_amount_umaren = UMAREN_FIXED_AMOUNT;
+      updated.bet_amount_wide = BET_BUDGET_PER_AITE - UMAREN_FIXED_AMOUNT;
+    }
+    if (updated.aite_horse_number_2 !== null) {
+      updated.bet_amount_umaren_2 = UMAREN_FIXED_AMOUNT;
+      updated.bet_amount_wide_2 = BET_BUDGET_PER_AITE - UMAREN_FIXED_AMOUNT;
+    }
+  }
+  return updated;
+}
+
 // トラックバイアスはその時の馬場状態次第のため、直近の実データを根拠にする。
 // - 日曜のレース: [今週土曜の同場, 先週の同場] の最大2件を参照 (2026-07-13、ユーザー指摘により
 //   土曜だけでなく先週分も追加。片方だけしか見つからない場合はあるものだけ返す)
@@ -570,7 +593,9 @@ async function persistDiagnosis(
   biasReferenceRaceId: string | null,
   tier: UsageLogTier,
 ): Promise<void> {
-  const result = enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult));
+  const result = applyFixedBetSplit(
+    enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult)),
+  );
   await supabase
     .from("races")
     .update({
