@@ -90,6 +90,35 @@ export async function validatePreview(supabase: Db, date: string): Promise<Valid
   return { ok: errors.length === 0, errors, warnings };
 }
 
+// 「危険な人気馬」投稿の門番。該当馬がまだ発走していないこと(結果が出た後の後出しを防ぐ)、
+// 選んだ根拠(horse_rank_comment)が空でないことだけを確認する。該当0件はerrorにしない
+// (該当なしの日は投稿を諦めるのが正しい挙動で、バッチが壊れたわけではないため)。
+export async function validateDangerFavorite(
+  supabase: Db,
+  raceId: string,
+  horseRankComment: string
+): Promise<ValidationResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!horseRankComment.trim()) {
+    errors.push("horse_rank_commentが空(根拠なしでの投稿は禁止)");
+  }
+
+  const { data: entries } = await supabase
+    .from("race_entries")
+    .select("finish_position")
+    .eq("race_id", raceId)
+    .not("finish_position", "is", null)
+    .gt("finish_position", 0)
+    .limit(1);
+  if (entries && entries.length > 0) {
+    errors.push("対象レースが既に確定している(発走前投稿が原則のため中止)");
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
 export async function validateResults(supabase: Db, date: string): Promise<ValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];

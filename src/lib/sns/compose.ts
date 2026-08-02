@@ -170,6 +170,119 @@ export function composeResults(d: ResultsData): string {
   return `${head}${tail}`;
 }
 
+export type DangerFavoriteData = {
+  raceId: string;
+  race_date: string;
+  keibajo_name: string | null;
+  race_number: number;
+  race_name: string | null;
+  race_class: string | null;
+  post_time: string | null;
+  horse_number: number;
+  post_position: number;
+  horse_name: string;
+  expected_popularity: number;
+  odds_win: number | null;
+  horse_rank: string | null;
+  horse_rank_comment: string;
+} | null;
+
+// 発走前に上位人気馬(1〜5番人気)の中から「危険」と明言された馬を1頭だけ選ぶ。
+// horse_rank_commentへの「危険」の書き込みはprompts.ts §「危険な人気馬」の指示に依る
+// (LLMが該当ありと判断した場合のみ書かれる、機械的スコアリングではない自由記述)。
+// 1日1投稿の想定のため、該当が複数レースにまたがる場合は最も人気(番号が若い=人気が高い)な
+// 馬を優先する(見出し力が強く、外れた場合の検証価値も高いため)。同着はpost_timeが早い方。
+export async function loadDangerFavoriteData(supabase: Db, date: string): Promise<DangerFavoriteData> {
+  const { data } = await supabase
+    .from("race_entries")
+    .select(
+      "horse_number, post_position, expected_popularity, odds_win, horse_rank, horse_rank_comment, " +
+        "horses(horse_name), races!inner(id, race_date, keibajo_name, race_number, race_name, race_class, post_time)"
+    )
+    .eq("races.race_date", date)
+    .not("expected_popularity", "is", null)
+    .lte("expected_popularity", 5)
+    .like("horse_rank_comment", "%危険%")
+    .returns<
+      {
+        horse_number: number;
+        post_position: number;
+        expected_popularity: number | null;
+        odds_win: number | null;
+        horse_rank: string | null;
+        horse_rank_comment: string | null;
+        horses: { horse_name: string } | null;
+        races: {
+          id: string;
+          race_date: string;
+          keibajo_name: string | null;
+          race_number: number;
+          race_name: string | null;
+          race_class: string | null;
+          post_time: string | null;
+        };
+      }[]
+    >();
+
+  const rows = data ?? [];
+  if (rows.length === 0) return null;
+
+  rows.sort(
+    (a, b) =>
+      (a.expected_popularity ?? 9) - (b.expected_popularity ?? 9) ||
+      (a.races.post_time ?? "").localeCompare(b.races.post_time ?? "")
+  );
+  const r = rows[0];
+  return {
+    raceId: r.races.id,
+    race_date: r.races.race_date,
+    keibajo_name: r.races.keibajo_name,
+    race_number: r.races.race_number,
+    race_name: r.races.race_name,
+    race_class: r.races.race_class,
+    post_time: r.races.post_time,
+    horse_number: r.horse_number,
+    post_position: r.post_position,
+    horse_name: r.horses?.horse_name ?? "—",
+    expected_popularity: r.expected_popularity ?? 0,
+    odds_win: r.odds_win,
+    horse_rank: r.horse_rank,
+    horse_rank_comment: r.horse_rank_comment ?? "",
+  };
+}
+
+// 発走前ポスト(危険な人気馬)。3案のうち①を採用(2026-08-02、ユーザー判断)。
+// 受け身の実況より「発走前の具体的・検証可能な逆張り投稿」の方が拡散・信頼構築の両面で強いため。
+// 断定表現は避け、根拠は必ずhorse_rank_commentの実文を引用する(でっち上げ防止・twitter-strategy.md §4)。
+export function composeDangerFavorite(d: NonNullable<DangerFavoriteData>): string {
+  const raceTitle = d.race_name || d.race_class || `${d.race_number}R`;
+  const timeLabel = d.post_time ? d.post_time.slice(0, 5) : "";
+  const oddsLabel = d.odds_win ? `${d.odds_win.toFixed(1)}倍` : "";
+  const head =
+    `⚠️危険な人気馬\n` +
+    `${d.keibajo_name ?? ""}${d.race_number}R ${raceTitle}(${timeLabel}発走)\n` +
+    `${d.horse_number}番 ${d.horse_name}(${d.expected_popularity}人気${oddsLabel ? " " + oddsLabel : ""})\n`;
+  const tail = `\n結果は的中も外れも夕方に報告します。\n#競馬予想`;
+
+  for (let max = d.horse_rank_comment.length; max >= 20; max -= 10) {
+    const reason = truncateReason(d.horse_rank_comment, max);
+    const text = `${head}${reason}${tail}`;
+    if (fitsInTweet(text)) return text;
+  }
+  return `${head}${tail}`;
+}
+
+// horse_rank_commentはLLMの自由記述のため、「⚠️」や「危険な人気馬:」等、画像・本文側で
+// 既に見出しとして表示済みの接頭辞が重複して入っていることがある。表示直前に剥がす。
+function stripDangerPrefix(text: string): string {
+  return text.replace(/^(⚠️\s*)?危険な人気馬[:：]?\s*/, "").replace(/^⚠️\s*/, "").trim();
+}
+
+function truncateReason(text: string, max: number): string {
+  const stripped = stripDangerPrefix(text);
+  return stripped.length > max ? `${stripped.slice(0, max - 1)}…` : stripped;
+}
+
 export function describeLength(text: string): string {
   return `${weightedLength(text)}/280 weighted(全角${Math.ceil(weightedLength(text) / 2)}字相当)`;
 }

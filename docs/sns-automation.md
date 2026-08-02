@@ -14,11 +14,28 @@
 | 毎日 19:00 | `com.keibaapp.shutubawatch` | 枠順・オッズ取り込み(確定した瞬間に自動で拾う) |
 | 金・土 22:00 | `com.keibaapp.diagnoseupcoming` | 翌日分の出馬表更新 → 全レース診断(LLM) → **「あすの診断」を投稿** |
 | 土・日 07:30 | `com.keibaapp.snspostmorning` | **「きょうの狙い」を投稿** |
+| 土・日 08:00 | `com.keibaapp.snsdanger`(未登録・要設定) | **「危険な人気馬」を1頭だけ単体投稿**(下記参照) |
 | 土・日 17:30 | `com.keibaapp.snsresults` | 配当同期 → ROI集計 → **「結果」を朝の投稿の引用RTで投稿** |
 
 「あすの診断」投稿を22:30の別ジョブにせず**診断スクリプトの末尾に連結している**のは意図的。
 時刻で待たせると、診断が長引いたときに中途半端なデータで投稿してしまうため
 (`set -e`により、診断が失敗すれば投稿もされない)。
+
+### 「危険な人気馬」単体投稿(2026-08-02追加、`--mode danger`)
+
+SNS運用強化の3案(①危険な人気馬の単体投稿 ②敗因分析スレッド ③市場とAI評価差の一言化)のうち、
+①をユーザー判断で採用した(受け身の実況投稿よりインプレッションが伸びやすいと判断したため)。
+
+- 当日の診断済みレースから、**上位人気(1〜5番人気)かつhorse_rank_commentに「危険」の記述がある馬を1頭だけ**選び、
+  発走前に単体投稿する(候補が複数レースにまたがる場合は人気が最も高い馬を優先)。該当0件の日は何もしない(正常系、エラー通知なし)
+- 断定表現を避けるため、投稿文の根拠は**horse_rank_commentの実文をそのまま引用**する(文言のでっち上げを防ぐ)
+- 二重投稿防止: `sns-out/posted.json`にその日投稿したraceIdを記録し、同じレースへの再投稿をスキップする
+- 安全装置: 対象レースが既に確定済み(finish_positionが入っている)なら投稿しない(発走前投稿の原則を機械的に担保)
+- **launchdジョブは未登録。** 07:30の「きょうの狙い」の後、8:00頃に以下を追加登録すること:
+  ```
+  npm run sns:auto -- --mode danger --env-file .env.local
+  ```
+  他ジョブのplistをコピーし`--mode morning`を`--mode danger`に差し替えれば作れる(`~/Library/LaunchAgents/com.keibaapp.snspostmorning.plist`が雛形)
 
 ## あなたがやる作業(3つ)
 
@@ -94,7 +111,7 @@ Macの通知センターに理由を出す**:
 
 ```bash
 # 特定の日の投稿を手動生成(dry-run)
-npm run sns:auto -- --mode evening|morning|results --date YYYY-MM-DD --env-file .env.local --dry-run
+npm run sns:auto -- --mode evening|morning|results|danger --date YYYY-MM-DD --env-file .env.local --dry-run
 
 # 投稿文・画像・動画をまとめて生成(投稿はしない。TikTok用の素材もここから)
 npm run sns:pack -- --date YYYY-MM-DD --mode preview|results --env-file .env.local

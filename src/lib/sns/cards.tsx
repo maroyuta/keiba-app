@@ -704,6 +704,126 @@ export function DigestCard({
 }
 
 // ---------------------------------------------------------------------------
+// 2.5. 危険な人気馬カード(発走前・単体投稿用、2026-08-02追加)
+// ---------------------------------------------------------------------------
+
+export type DangerFavoriteCardData = {
+  race_date: string;
+  keibajo_name: string | null;
+  race_number: number;
+  race_name: string | null;
+  race_class: string | null;
+  post_time: string | null;
+  horse_number: number;
+  post_position: number;
+  horse_name: string;
+  expected_popularity: number;
+  odds_win: number | null;
+  horse_rank: string | null;
+  horse_rank_comment: string;
+};
+
+export function DangerFavoriteCard({
+  data,
+  format,
+}: {
+  data: DangerFavoriteCardData;
+  format: CardFormat;
+}): ReactElement {
+  const scale = format === "story" ? 1.35 : 1;
+  const size = format === "story" ? { w: 1080, h: 1920, pad: 56 } : { w: 1200, h: 675, pad: 40 };
+  const raceMeta = [
+    data.keibajo_name ?? "",
+    `${data.race_number}R`,
+    data.race_name || data.race_class || "",
+    data.post_time ? `${data.post_time.slice(0, 5)}発走` : "",
+  ]
+    .filter(Boolean)
+    .join(" ・ ");
+  const reasonMax = format === "story" ? 130 : 90;
+
+  return (
+    <CardRoot width={size.w} height={size.h} padding={size.pad}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", fontSize: 20 * scale, fontWeight: 700, color: C.orange }}>
+          {SNS_BRAND.name}
+        </div>
+        <div style={{ display: "flex", fontSize: 16 * scale, color: C.creamDim }}>
+          {formatDateLabel(data.race_date)}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10 * scale,
+          marginTop: 16 * scale,
+          borderRadius: 12,
+          border: `1px solid rgba(248,113,113,0.5)`,
+          backgroundColor: C.redSoft,
+          padding: `${8 * scale}px ${16 * scale}px`,
+          alignSelf: "flex-start",
+        }}
+      >
+        <div style={{ display: "flex", fontSize: 24 * scale, fontWeight: 700, color: C.red }}>
+          ⚠️ 危険な人気馬
+        </div>
+      </div>
+      <div style={{ display: "flex", marginTop: 10 * scale, fontSize: 18 * scale, color: C.creamDim }}>
+        {raceMeta}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16 * scale,
+          marginTop: 18 * scale,
+        }}
+      >
+        <WakuChip waku={data.post_position} size={44 * scale} />
+        <div style={{ display: "flex", fontSize: 24 * scale, color: C.creamFaint }}>
+          {data.horse_number}
+        </div>
+        <div style={{ display: "flex", fontSize: 44 * scale, fontWeight: 700, flexGrow: 1 }}>
+          {truncate(data.horse_name, 12)}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <div style={{ display: "flex", fontSize: 22 * scale, fontWeight: 700, color: C.orange }}>
+            {data.expected_popularity}番人気
+          </div>
+          {data.odds_win !== null && (
+            <div style={{ display: "flex", fontSize: 18 * scale, color: C.creamDim }}>
+              {data.odds_win.toFixed(1)}倍
+            </div>
+          )}
+        </div>
+        <RankChip rank={data.horse_rank} size={40 * scale} />
+      </div>
+      <div
+        style={{
+          display: "flex",
+          marginTop: 20 * scale,
+          padding: `${14 * scale}px ${18 * scale}px`,
+          borderRadius: 12,
+          border: `1px solid ${C.line}`,
+          backgroundColor: C.panel,
+          fontSize: 19 * scale,
+          lineHeight: 1.55,
+          color: C.cream,
+          flexGrow: 1,
+        }}
+      >
+        {truncate(
+          data.horse_rank_comment.replace(/^(⚠️\s*)?危険な人気馬[:：]?\s*/, "").replace(/^⚠️\s*/, "").trim(),
+          reasonMax
+        )}
+      </div>
+      <BrandFooter scale={scale} />
+    </CardRoot>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 3. 結果・収支カード
 // ---------------------------------------------------------------------------
 

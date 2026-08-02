@@ -2,16 +2,19 @@ import { ImageResponse } from "next/og";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import {
+  DangerFavoriteCard,
   DigestCard,
   RaceCard,
   ResultsCard,
   formatDateLabel,
   type CardEntry,
   type CardRace,
+  type DangerFavoriteCardData,
   type DigestRow,
   type ResultRow,
   type ResultsSummary,
 } from "./cards";
+import type { DangerFavoriteData } from "./compose";
 import { buildFonts } from "./font";
 import { cardSize, type CardFormat } from "./theme";
 
@@ -176,6 +179,28 @@ export async function renderResults(
     format,
     JSON.stringify({ summary, resultRows })
   );
+}
+
+export async function renderDangerFavoriteCard(
+  data: NonNullable<DangerFavoriteData>,
+  format: CardFormat
+): Promise<ImageResponse> {
+  const cardData: DangerFavoriteCardData = {
+    race_date: data.race_date,
+    keibajo_name: data.keibajo_name,
+    race_number: data.race_number,
+    race_name: data.race_name,
+    race_class: data.race_class,
+    post_time: data.post_time,
+    horse_number: data.horse_number,
+    post_position: data.post_position,
+    horse_name: data.horse_name,
+    expected_popularity: data.expected_popularity,
+    odds_win: data.odds_win,
+    horse_rank: data.horse_rank,
+    horse_rank_comment: data.horse_rank_comment,
+  };
+  return toPng(DangerFavoriteCard({ data: cardData, format }), format, JSON.stringify(cardData));
 }
 
 export async function toBuffer(res: ImageResponse): Promise<Buffer> {

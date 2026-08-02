@@ -4,13 +4,15 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadEnvFileFromArgs } from "../netkeiba/loadEnvFile";
 import { createNetkeibaSyncClient } from "../netkeiba/supabaseClient";
-import { renderDigest, renderResults, toBuffer } from "@/lib/sns/render";
-import { validatePreview, validateResults } from "@/lib/sns/validate";
+import { renderDangerFavoriteCard, renderDigest, renderResults, toBuffer } from "@/lib/sns/render";
+import { validateDangerFavorite, validatePreview, validateResults } from "@/lib/sns/validate";
 import {
+  composeDangerFavorite,
   composeEveningPreview,
   composeMorningPreview,
   composeResults,
   describeLength,
+  loadDangerFavoriteData,
   loadPreviewData,
   loadResultsData,
 } from "@/lib/sns/compose";
@@ -26,10 +28,14 @@ import { makeSlideshow } from "./makeVideo";
 // バリデーションでerrorが出たら投稿せず通知だけ出す(壊れたデータの公開を防ぐ)。
 // X_*の環境変数が未設定なら自動的にdry-run(投稿せずログのみ)。
 
-type Mode = "evening" | "morning" | "results";
+type Mode = "evening" | "morning" | "results" | "danger";
 
 // 投稿したツイートIDの記録。結果報告を朝の予想の引用RTにするために使う。
-type PostedState = Record<string, { morning?: string; evening?: string; results?: string }>;
+// dangerは1日1レース分のraceIdを記録し、同じレースへの二重投稿を防ぐ(手動再実行対策)。
+type PostedState = Record<
+  string,
+  { morning?: string; evening?: string; results?: string; danger?: { raceId: string; tweetId: string } }
+>;
 
 const STATE_PATH = join(process.cwd(), "sns-out", "posted.json");
 
@@ -74,9 +80,9 @@ async function main() {
     return i !== -1 ? args[i + 1] : null;
   };
   const mode = get("--mode") as Mode | null;
-  if (!mode || !["evening", "morning", "results"].includes(mode)) {
+  if (!mode || !["evening", "morning", "results", "danger"].includes(mode)) {
     console.error(
-      "使い方: npx tsx scripts/sns/autoPost.ts --mode evening|morning|results [--date YYYY-MM-DD] [--env-file <path>] [--dry-run]"
+      "使い方: npx tsx scripts/sns/autoPost.ts --mode evening|morning|results|danger [--date YYYY-MM-DD] [--env-file <path>] [--dry-run]"
     );
     process.exit(1);
   }
@@ -84,7 +90,7 @@ async function main() {
     process.env.X_DRY_RUN = "1";
   }
 
-  // evening(前日夜)は翌日分、morning/resultsは当日分が既定
+  // evening(前日夜)は翌日分、morning/results/dangerは当日分が既定
   const date = get("--date") ?? (mode === "evening" ? jstTomorrow() : jstToday());
   const supabase = createNetkeibaSyncClient();
   const outDir = join(process.cwd(), "sns-out", `${date}-auto`);
@@ -92,6 +98,51 @@ async function main() {
 
   console.log(`=== ${new Date().toISOString()} autoPost mode=${mode} date=${date} ===`);
   console.log(`X認証: ${isConfigured() ? "設定済み" : "未設定(dry-run)"}`);
+
+  // dangerは「発走前に人気馬を名指しで警告する」単発投稿のため、他モードの
+  // バリデーション/画像/文面パイプラインとは別系統で扱う(候補0件は正常系=終了、
+  // 同じレースへの二重投稿は記録で防ぐ)。
+  if (mode === "danger") {
+    const state = await loadState();
+    const already = state[date]?.danger;
+
+    const candidate = await loadDangerFavoriteData(supabase, date);
+    if (!candidate) {
+      console.log(`[skip] ${date}に「危険な人気馬」該当馬が0件`);
+      return;
+    }
+    if (already && already.raceId === candidate.raceId) {
+      console.log(`[skip] ${date}は既に投稿済み(race ${candidate.raceId})`);
+      return;
+    }
+
+    const validation = await validateDangerFavorite(supabase, candidate.raceId, candidate.horse_rank_comment);
+    for (const w of validation.warnings) console.log(`[warn] ${w}`);
+    if (!validation.ok) {
+      for (const e of validation.errors) console.error(`[error] ${e}`);
+      await notify("SNS自動投稿を中止しました", `${date} danger: ${validation.errors[0]}`);
+      process.exit(1);
+    }
+
+    const res = await renderDangerFavoriteCard(candidate, "og");
+    const imagePath = join(outDir, "danger-og.png");
+    await writeFile(imagePath, await toBuffer(res));
+
+    const text = composeDangerFavorite(candidate);
+    console.log(`--- 本文 (${describeLength(text)}) ---\n${text}`);
+
+    const result = await postToX({ text, imagePaths: [imagePath] });
+    if (result.tweetId) {
+      state[date] = { ...state[date], danger: { raceId: candidate.raceId, tweetId: result.tweetId } };
+      await saveState(state);
+      console.log(`✅ 投稿しました: https://x.com/i/status/${result.tweetId}`);
+      await notify("SNS自動投稿", `${date} danger を投稿しました(${candidate.keibajo_name}${candidate.race_number}R ${candidate.horse_name})`);
+    } else {
+      console.log(`(dry-run のため投稿していません。画像: ${imagePath})`);
+      await notify("SNS自動投稿(dry-run)", `${date} danger: 生成完了、投稿はしていません`);
+    }
+    return;
+  }
 
   // --- 1. バリデーション ---
   const validation =
