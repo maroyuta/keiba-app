@@ -120,6 +120,132 @@ function enforcePopularityGuard(
   };
 }
 
+// 馬券方針「昇級戦(今回のクラスで初めて走る馬)はaite候補にしない、原則除外」(prompts.ts参照)は
+// これまでプロンプト上の指示のみで、コード側のenforcementが無かった。実際に未勝利上がりの馬が
+// aiteに選ばれる違反が発生したため、MAX_BET_POPULARITY同様に書き込み直前の機械チェックを追加する。
+// **2026-08-02、ユーザーから「honmeiも含めて昇級戦・昇級後2戦目の馬の購入は控えたい、一切実行
+// されていない」と明確な指摘があり、対象をhonmei/aite両方に拡大し、判定も「昇級初戦のみ」から
+// 「昇級初戦または2戦目まで」に広げた。**(以前は honmei は「圧倒的な内容なら例外」を許容する設計
+// だったが、今回の指摘でその例外ごと撤回している。血統・展開等の圧倒的根拠があっても、この機械
+// チェックは通らない点に注意)
+// 判定はrace_class同士の一般的な序列比較ではなく、「取得済みの過去走(直近最大5走)のうち、今回の
+// race_class(未勝利/新馬ではない)に該当しうる非未勝利/新馬の実績が1走以下(=今回が初戦または2戦目)」
+// という狭いが確実なパターンに限定する(past_performances.race_classが未収録のため、race_name
+// 文字列でのマッチに依る制約。1勝→2勝→3勝→OPのような、より上位クラス間の昇級は対象外)。
+const MAIDEN_TIER_PATTERN = /未勝利|新馬/;
+const MAX_NON_MAIDEN_STARTS_FOR_GUARD = 1;
+
+function isEarlyClassUp(input: RaceDiagnosisInput, horseNumber: number): boolean {
+  if (input.race.race_class && MAIDEN_TIER_PATTERN.test(input.race.race_class)) {
+    return false;
+  }
+  const entry = input.entries.find((e) => e.entry.horse_number === horseNumber);
+  if (!entry || entry.pastPerformances.length === 0) return false;
+  const nonMaidenStarts = entry.pastPerformances.filter(
+    (pp) => !!pp.race_name && !MAIDEN_TIER_PATTERN.test(pp.race_name),
+  ).length;
+  return nonMaidenStarts <= MAX_NON_MAIDEN_STARTS_FOR_GUARD;
+}
+
+// honmei/aiteに選ばれたかどうかに関わらず、出走馬一覧のカード自体にも昇級初戦・2戦目である旨を
+// 表示する(2026-08-02、ユーザーが「全頭診断を参考に自分で買い目を組んだ」際に、見送りにした馬が
+// horse_rank="S"のまま何の注記も無く表示され、結局その馬を買ってしまった事故を受けて追加)。
+// race_rank_reasonへの注記だけでは出走馬カード単体を見た時に伝わらないため、該当馬自身の
+// horse_rank_commentにも警告を追記する。
+function annotateClassUpEntries(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  let annotatedAny = false;
+  const entries = result.entries.map((entry) => {
+    if (!isEarlyClassUp(input, entry.horse_number)) return entry;
+    annotatedAny = true;
+    return {
+      ...entry,
+      horse_rank_comment: `⚠️昇級初戦・2戦目(今回のクラスでの実績${MAX_NON_MAIDEN_STARTS_FOR_GUARD}走以下)のため軸・相手として非推奨。${entry.horse_rank_comment}`,
+    };
+  });
+  if (!annotatedAny) return result;
+  return { ...result, entries };
+}
+
+function enforceClassUpGuard(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  let updated = annotateClassUpEntries(input, result);
+  const notes: string[] = [];
+
+  // honmei/aite(1人目)のどちらかが昇級初戦・2戦目に該当する場合は、買い目全体(honmei込み)を
+  // 見送りにする。片方だけ残しても本命→相手のペア馬券として成立しないため。
+  const honmeiHit =
+    updated.honmei_horse_number !== null && isEarlyClassUp(input, updated.honmei_horse_number);
+  const aiteHit =
+    updated.aite_horse_number !== null && isEarlyClassUp(input, updated.aite_horse_number);
+  if (honmeiHit || aiteHit) {
+    if (honmeiHit) notes.push(`本命${updated.honmei_horse_number}番`);
+    if (aiteHit) notes.push(`相手${updated.aite_horse_number}番`);
+    updated = {
+      ...updated,
+      honmei_horse_number: null,
+      aite_horse_number: null,
+      aite_horse_number_2: null,
+      bet_type: null,
+      bet_amount_wide: null,
+      bet_amount_umaren: null,
+      bet_amount_wide_2: null,
+      bet_amount_umaren_2: null,
+    };
+  }
+
+  if (updated.aite_horse_number_2 !== null && isEarlyClassUp(input, updated.aite_horse_number_2)) {
+    notes.push(`相手2 ${updated.aite_horse_number_2}番`);
+    updated = {
+      ...updated,
+      aite_horse_number_2: null,
+      bet_amount_wide_2: null,
+      bet_amount_umaren_2: null,
+    };
+  }
+
+  if (notes.length === 0) {
+    // honmei/aiteの見送り自体は発生しなかった場合でも、annotateClassUpEntriesによる
+    // 出走馬カードへの注記(updated)は活かして返す(resultに巻き戻さない)。
+    return updated;
+  }
+
+  console.warn(
+    `[class-up-guard] race ${notes.join("、")}が昇級初戦・2戦目(非未勝利/新馬の実績${MAX_NON_MAIDEN_STARTS_FOR_GUARD}走以下)のため機械的に見送りへ変更`,
+  );
+  return {
+    ...updated,
+    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${notes.join("、")}は今回のクラスでの実績が1走以下(昇級初戦または2戦目)のため、機械的に見送りへ変更した。`,
+  };
+}
+
+// 馬連はワイドよりオッズが高くなりやすい=的中率が低いため、馬連への配分を大きくしすぎない
+// (2026-08-02、ユーザー指摘: 「馬連はほぼ当たらないので500円でほぼ固定、残りはワイドに」という
+// 指示が過去にあったが、prompts.tsには「払戻額を揃える」という別の計算方式しか反映されておらず、
+// 実際に馬連1,600円/1,900円のような配分が出ていた=指示が実装に反映されていなかった)。
+// LLMに毎回按分計算をさせず、コード側で単純な固定配分として強制する。
+const UMAREN_FIXED_AMOUNT = 500;
+const BET_BUDGET_PER_AITE = 5000;
+
+function applyFixedBetSplit(result: DiagnosisResult): DiagnosisResult {
+  const updated = { ...result };
+  if (updated.bet_type === "both") {
+    if (updated.aite_horse_number !== null) {
+      updated.bet_amount_umaren = UMAREN_FIXED_AMOUNT;
+      updated.bet_amount_wide = BET_BUDGET_PER_AITE - UMAREN_FIXED_AMOUNT;
+    }
+    if (updated.aite_horse_number_2 !== null) {
+      updated.bet_amount_umaren_2 = UMAREN_FIXED_AMOUNT;
+      updated.bet_amount_wide_2 = BET_BUDGET_PER_AITE - UMAREN_FIXED_AMOUNT;
+    }
+  }
+  return updated;
+}
+
 // トラックバイアスはその時の馬場状態次第のため、直近の実データを根拠にする。
 // - 日曜のレース: [今週土曜の同場, 先週の同場] の最大2件を参照 (2026-07-13、ユーザー指摘により
 //   土曜だけでなく先週分も追加。片方だけしか見つからない場合はあるものだけ返す)
@@ -467,7 +593,9 @@ async function persistDiagnosis(
   biasReferenceRaceId: string | null,
   tier: UsageLogTier,
 ): Promise<void> {
-  const result = enforcePopularityGuard(input, rawResult);
+  const result = applyFixedBetSplit(
+    enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult)),
+  );
   await supabase
     .from("races")
     .update({
