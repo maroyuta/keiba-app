@@ -123,11 +123,16 @@ function enforcePopularityGuard(
 // 馬券方針「昇級戦(今回のクラスで初めて走る馬)はaite候補にしない、原則除外」(prompts.ts参照)は
 // これまでプロンプト上の指示のみで、コード側のenforcementが無かった。実際に未勝利上がりの馬が
 // aiteに選ばれる違反が発生したため、MAX_BET_POPULARITY同様に書き込み直前の機械チェックを追加する。
-// **2026-08-02、ユーザーから「honmeiも含めて昇級戦・昇級後2戦目の馬の購入は控えたい、一切実行
-// されていない」と明確な指摘があり、対象をhonmei/aite両方に拡大し、判定も「昇級初戦のみ」から
-// 「昇級初戦または2戦目まで」に広げた。**(以前は honmei は「圧倒的な内容なら例外」を許容する設計
-// だったが、今回の指摘でその例外ごと撤回している。血統・展開等の圧倒的根拠があっても、この機械
-// チェックは通らない点に注意)
+// **2026-08-02午前、ユーザー指摘でhonmei/aite両方に拡大していたが、同日中に
+// race_recommendation_results全期間の実データを検証した結果、「昇級馬を含む買い目」の回収率は
+// 除外なしより高い(全期間n=396: 含む93.1% vs 含まない77.9%、2アイテ有無で分けても同傾向)ことが
+// 判明。ただし直近100件だけで見ると逆転する(含む65.4% vs 含まない82.4%)等ノイズも大きく、
+// 「昇級馬=買うべき/買うべきでない」を数字だけで決め切れる状態ではなかった。honmei(軸)は
+// 「相手より情報の確度が高い場面で選ばれる」性質上、市場の人気自体が判断材料になるため実害が
+// 見えにくいと判断し、ユーザーの意思で**honmei側の昇級ガードは撤廃**(自由に選んで良い)。
+// aite(相手穴)側は「相当な理由があれば例外」という緩和も検討したが、honmeiが以前まさに
+// この「圧倒的な内容なら例外」でLLMに際限なく理由をでっち上げられて機能しなかった前例と同じ
+// リスクがあるため、**aite側は例外なしのハードブロックを維持**する。
 // 判定はrace_class同士の一般的な序列比較ではなく、「取得済みの過去走(直近最大5走)のうち、今回の
 // race_class(未勝利/新馬ではない)に該当しうる非未勝利/新馬の実績が1走以下(=今回が初戦または2戦目)」
 // という狭いが確実なパターンに限定する(past_performances.race_classが未収録のため、race_name
@@ -147,11 +152,13 @@ function isEarlyClassUp(input: RaceDiagnosisInput, horseNumber: number): boolean
   return nonMaidenStarts <= MAX_NON_MAIDEN_STARTS_FOR_GUARD;
 }
 
-// honmei/aiteに選ばれたかどうかに関わらず、出走馬一覧のカード自体にも昇級初戦・2戦目である旨を
+// aiteに選ばれたかどうかに関わらず、出走馬一覧のカード自体にも昇級初戦・2戦目である旨を
 // 表示する(2026-08-02、ユーザーが「全頭診断を参考に自分で買い目を組んだ」際に、見送りにした馬が
 // horse_rank="S"のまま何の注記も無く表示され、結局その馬を買ってしまった事故を受けて追加)。
 // race_rank_reasonへの注記だけでは出走馬カード単体を見た時に伝わらないため、該当馬自身の
-// horse_rank_commentにも警告を追記する。
+// horse_rank_commentにも警告を追記する。honmei側のガードは同日中に撤廃したため、文言も
+// 「相手としては原則除外」のみに変更し「軸として非推奨」は謳わない(honmeiに選ばれること自体は
+// 問題ない)。
 function annotateClassUpEntries(
   input: RaceDiagnosisInput,
   result: DiagnosisResult,
@@ -162,7 +169,7 @@ function annotateClassUpEntries(
     annotatedAny = true;
     return {
       ...entry,
-      horse_rank_comment: `⚠️昇級初戦・2戦目(今回のクラスでの実績${MAX_NON_MAIDEN_STARTS_FOR_GUARD}走以下)のため軸・相手として非推奨。${entry.horse_rank_comment}`,
+      horse_rank_comment: `⚠️昇級初戦・2戦目(今回のクラスでの実績${MAX_NON_MAIDEN_STARTS_FOR_GUARD}走以下)のため相手としては原則除外対象。${entry.horse_rank_comment}`,
     };
   });
   if (!annotatedAny) return result;
@@ -176,15 +183,13 @@ function enforceClassUpGuard(
   let updated = annotateClassUpEntries(input, result);
   const notes: string[] = [];
 
-  // honmei/aite(1人目)のどちらかが昇級初戦・2戦目に該当する場合は、買い目全体(honmei込み)を
-  // 見送りにする。片方だけ残しても本命→相手のペア馬券として成立しないため。
-  const honmeiHit =
-    updated.honmei_horse_number !== null && isEarlyClassUp(input, updated.honmei_horse_number);
+  // aite(1人目)が昇級初戦・2戦目に該当する場合のみ、買い目全体(honmei込み)を見送りにする。
+  // honmeiだけ残しても本命→相手のペア馬券として成立しないため。honmei自体が昇級馬であることは
+  // 2026-08-02のデータ検証(全期間で除外なしの方が回収率が高い)を受けて許容している。
   const aiteHit =
     updated.aite_horse_number !== null && isEarlyClassUp(input, updated.aite_horse_number);
-  if (honmeiHit || aiteHit) {
-    if (honmeiHit) notes.push(`本命${updated.honmei_horse_number}番`);
-    if (aiteHit) notes.push(`相手${updated.aite_horse_number}番`);
+  if (aiteHit) {
+    notes.push(`相手${updated.aite_horse_number}番`);
     updated = {
       ...updated,
       honmei_horse_number: null,
