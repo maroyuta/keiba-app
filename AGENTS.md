@@ -6,7 +6,31 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
-## 📈 2026-08-02回収率2系列を確定・未pushコミット発見/push・「危険な人気馬」単体投稿を実装 (2026-08-02、リモートセッション) ★次回はここから読む
+## 🗃️ 実購入(俺アレンジ)専用テーブル`user_bets`を新設 (2026-08-03) ★次回はここから読む
+
+これまで実購入の内訳・金額はAGENTS.mdへの手打ちメモ頼みで、聞き漏れ・値の食い違いが複数回
+発生していた(直前の2セッション照合参照)。ユーザーの希望により、口頭(チャット)で伝えてもらう
+運用は維持しつつ、記録先をDBに変更した。
+
+- 新規マイグレーション`supabase/migrations/20260803000000_add_user_bets.sql`、Supabase MCP経由で
+  適用済み。カラムは`race_id`/`bet_type`/`combination`(馬番を"-"で連結、race_payoutsと同形式)/
+  `stake_yen`/`note`(任意メモ)。
+- **専用の集計バッチは設けていない**(race_recommendation_resultsと違い書き込み頻度が低いため)。
+  回収率が要る時は都度`race_payouts`とのLEFT JOINで計算する:
+  ```sql
+  select ub.*, coalesce(p.payout_yen * ub.stake_yen / 100, 0) as return_yen
+  from user_bets ub
+  join races r on r.id = ub.race_id
+  left join race_payouts p on p.race_id = ub.race_id
+    and p.bet_type = ub.bet_type and p.combination = ub.combination
+  where ...
+  ```
+  (payout_yenは100円単位のJRA標準払戻額なので`* stake_yen / 100`でスケール。動作確認済み、
+  2026-08-03)
+- 運用: ユーザーが「新潟6R、1-4でワイド4000+馬連600」のように伝えたら、その場でこのテーブルに
+  insertする。5,000円/レース正規化などの集計ルールは本ファイル内の過去の回収率検証セクション参照。
+
+## 📈 2026-08-02回収率2系列を確定・未pushコミット発見/push・「危険な人気馬」単体投稿を実装 (2026-08-02、リモートセッション)
 
 前回セッション終了時点で残っていた4つの申し送り(Vercelデプロイ確認・配当同期・回収率比較・SNS施策選定)に対応。
 
