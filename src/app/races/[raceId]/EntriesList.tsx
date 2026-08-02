@@ -37,10 +37,14 @@ function EntryRow({
             : "border-[#f2efe6]/10 bg-[#12241f]"
       }`}
     >
+      {/* ネット競馬の馬柱と同じ並び(枠→馬番→印→馬名→オッズ/人気)に揃える(2026-08-02、
+          ユーザー指摘: ランクが右端に離れていて枠→馬番→馬名の並びと繋がって読めず分かりにくい)。
+          ランク(S/A/B/C)はネット競馬の「印」欄の位置=馬番の直後に置く。 */}
       <WakuBadge waku={entry.post_position} />
+      <span className="mt-1.5 shrink-0 font-mono text-xs text-[#f2efe6]/45">{entry.horse_number}番</span>
+      <RankBadge rank={entry.horse_rank as RaceRank | null} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="font-mono text-xs text-[#f2efe6]/45">{entry.horse_number}番</span>
           <span className="truncate font-bold text-[#f2efe6]">{entry.horses.horse_name}</span>
           {isHonmei && (
             <span className="rounded bg-[#ff9f1c] px-1 text-xs font-bold text-[#0b1a17]">本命</span>
@@ -53,15 +57,14 @@ function EntryRow({
         </div>
         <div className="flex items-center gap-1.5 font-mono text-xs text-[#ff9f1c]">
           <span>
+            {entry.odds_win !== null && `${formatOdds(entry.odds_win)}倍 `}
             {entry.expected_popularity ? `${entry.expected_popularity}人気` : "—"}
-            {entry.odds_win !== null && ` (${formatOdds(entry.odds_win)}倍)`}
           </span>
         </div>
         {entry.horse_rank_comment && (
           <p className="mt-1 text-sm leading-snug text-[#f2efe6]/70">{entry.horse_rank_comment}</p>
         )}
       </div>
-      <RankBadge rank={entry.horse_rank as RaceRank | null} />
     </div>
   );
 }
