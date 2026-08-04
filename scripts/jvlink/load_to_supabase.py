@@ -317,21 +317,42 @@ def compute_blinkers_change(
 
 def build_training_session_payload(row: dict, horse_id: str) -> "dict | None":
     """HC_parsed.csv(parse_slop出力)の1行からtraining_sessionsのpayloadを組み立てる。
-    区間タイム(time_fields_raw)はバイト位置が未確定のため書き込まない
-    (scripts/jvlink/parse_records.pyのparse_slopのdocstring参照)。lap_times_secは
-    NOT NULL制約のため空オブジェクトを入れる(=「調教した事実は分かるが区間タイムは無い」)。"""
+    区間タイムはnetkeiba公表値(ロードトレイル、2026-07-29)との実データ突き合わせでバイト位置を
+    確定済み(scripts/jvlink/parse_records.pyのparse_slop docstring参照)。lap_times_secは
+    「ゴール手前メートル数」をキーにしたラップタイム、total_time_secは800m地点までの累計
+    (=坂路の総合タイム)。facilityはtc_rawの意味が実データと不一致で確定できないため未設定のまま。"""
     year, month, day = row.get("training_year", ""), row.get("training_month", ""), row.get("training_day", "")
     if not (year.isdigit() and month.isdigit() and day.isdigit()):
         return None
     hour, minute = row.get("training_hour", ""), row.get("training_minute", "")
     training_time = f"{hour}:{minute}:00" if hour.isdigit() and minute.isdigit() else None
+
+    lap_times_sec = {}
+    total_time_sec = None
+    cum_800 = to_float_scaled(row.get("cum_800", ""), 10)
+    lap_800_600 = to_float_scaled(row.get("lap_800_600", ""), 10)
+    lap_600_400 = to_float_scaled(row.get("lap_600_400", ""), 10)
+    lap_400_200 = to_float_scaled(row.get("lap_400_200", ""), 10)
+    cum_200 = to_float_scaled(row.get("cum_200", ""), 10)
+    if cum_800 is not None:
+        total_time_sec = cum_800
+    if lap_800_600 is not None:
+        lap_times_sec["800"] = lap_800_600
+    if lap_600_400 is not None:
+        lap_times_sec["600"] = lap_600_400
+    if lap_400_200 is not None:
+        lap_times_sec["400"] = lap_400_200
+    if cum_200 is not None:
+        lap_times_sec["200"] = cum_200
+
     return {
         "horse_id": horse_id,
         "training_date": f"{year}-{month}-{day}",
         "training_time": training_time,
         "training_type": "坂路",
         "facility": None,  # tc_rawの意味が実データと不一致で確定できないため未設定(parse_slop docstring参照)
-        "lap_times_sec": {},
+        "lap_times_sec": lap_times_sec,
+        "total_time_sec": total_time_sec,
         "data_source": "jv_link",
     }
 
