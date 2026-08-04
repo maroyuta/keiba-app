@@ -285,7 +285,34 @@ def build_entry_payload(row: dict, race_id: str, horse_id: str) -> dict:
         payload["horse_weight_diff_kg"] = zogen_sa if zogen_fugo == "+" else -zogen_sa
     else:
         payload["horse_weight_diff_kg"] = None
+
+    blinker_flag = (row.get("blinker") or "").strip()
+    payload["blinker_raw"] = blinker_flag == "1" if blinker_flag in ("0", "1") else None
     return payload
+
+
+def compute_blinkers_change(
+    blinker_raw: "bool | None",
+    prior_blinker_history: list,
+    current_race_date: str,
+) -> "str | None":
+    """今回のblinker_raw(bool|None)と、同じ馬の過去のrace_entries行から集めた
+    [(race_date, blinker_raw), ...](昇順ソート済み)を比較し、blinkers_changeを導出する。
+    race_entries.blinkers_changeのCHECK制約が'新規'/'継続'/'解除'のみを許容するため、
+    「前走情報が無い」「両走ともブリンカー無し」の場合はNoneを返す
+    (制約上「継続(未使用)」に相当する4つ目の値は存在しない)。"""
+    if blinker_raw is None:
+        return None
+    prior_flag = None
+    for race_date, flag in reversed(prior_blinker_history):
+        if race_date < current_race_date:
+            prior_flag = flag
+            break
+    if prior_flag is None:
+        return None
+    if prior_flag == blinker_raw:
+        return "継続" if blinker_raw else None
+    return "新規" if blinker_raw else "解除"
 
 
 def build_odds_updates(row: dict) -> list:
@@ -502,6 +529,8 @@ def main() -> None:
     )
     race_results = client.upsert("races", race_payloads, on_conflict="jv_race_key")
     race_id_by_key = {r["jv_race_key"]: r["id"] for r in race_results}
+    # blinkers_change算出(前走比較)用に、今回upsertした各レースのrace_dateも保持しておく。
+    race_date_by_id = {r["id"]: r["race_date"] for r in race_results}
     print(f"[races] {len(race_results)}件 upsert完了", file=sys.stderr)
 
     # 同じ馬が複数レースに出走する場合があるため、ketto_num単位で重複排除してからupsert
@@ -538,10 +567,64 @@ def main() -> None:
     entry_payloads = dedupe_by_key(
         entry_payloads, lambda p: (p["race_id"], p["horse_number"])
     )
+
+    # blinkers_change(新規/継続/解除)は前走のblinker_rawとの比較でしか出せないため、
+    # 対象馬の既存race_entries(このバッチでこれからupsertする分より前の、既にDBにある行)を
+    # horse_id単位でまとめて取得し、race_id -> race_dateで日付順に並べ替えてから比較する。
+    blinker_target_horse_ids = sorted(
+        {p["horse_id"] for p in entry_payloads if p.get("blinker_raw") is not None}
+    )
+    blinker_history_by_horse: dict = {hid: [] for hid in blinker_target_horse_ids}
+    if blinker_target_horse_ids:
+        chunk_size = 100
+        prior_entries = []
+        for i in range(0, len(blinker_target_horse_ids), chunk_size):
+            chunk = blinker_target_horse_ids[i : i + chunk_size]
+            prior_entries.extend(
+                client.select(
+                    "race_entries",
+                    {
+                        "horse_id": f"in.({','.join(chunk)})",
+                        "blinker_raw": "not.is.null",
+                        "select": "horse_id,race_id,blinker_raw",
+                    },
+                )
+            )
+        prior_race_ids = sorted({e["race_id"] for e in prior_entries} - race_date_by_id.keys())
+        if prior_race_ids:
+            chunk_size = 100
+            for i in range(0, len(prior_race_ids), chunk_size):
+                chunk = prior_race_ids[i : i + chunk_size]
+                for r in client.select(
+                    "races", {"id": f"in.({','.join(chunk)})", "select": "id,race_date"}
+                ):
+                    race_date_by_id[r["id"]] = r["race_date"]
+        for e in prior_entries:
+            race_date = race_date_by_id.get(e["race_id"])
+            if race_date:
+                blinker_history_by_horse[e["horse_id"]].append((race_date, e["blinker_raw"]))
+        for history in blinker_history_by_horse.values():
+            history.sort(key=lambda t: t[0])
+
+    for payload in entry_payloads:
+        current_race_date = race_date_by_id.get(payload["race_id"])
+        if current_race_date is None:
+            continue
+        payload["blinkers_change"] = compute_blinkers_change(
+            payload.get("blinker_raw"),
+            blinker_history_by_horse.get(payload["horse_id"], []),
+            current_race_date,
+        )
+
     entry_results = client.upsert(
         "race_entries", entry_payloads, on_conflict="race_id,horse_number"
     )
-    print(f"[race_entries] {len(entry_results)}件 upsert完了 (skipped={skipped})", file=sys.stderr)
+    blinkers_change_count = sum(1 for p in entry_payloads if p.get("blinkers_change"))
+    print(
+        f"[race_entries] {len(entry_results)}件 upsert完了 (skipped={skipped}, "
+        f"blinkers_change設定={blinkers_change_count})",
+        file=sys.stderr,
+    )
 
     if args.hr_csv:
         if not os.path.exists(args.hr_csv):
