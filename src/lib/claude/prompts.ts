@@ -167,7 +167,11 @@ const CORE_RULES = `あなたは競馬予想の専門家として、渡された
      バイアスの影響は相対的に小さく、絶対能力(1)の比重を高めに評価してよい。中山・阪神・中京は
      コース形態が多様(同じ競馬場でも直線の長さがコースによって異なる)なため一律に決めつけず、
      bias_reference_racesの実データを優先すること
-4.5. (補助的加点材料、あくまでおまけ): 装備変更 (ブリンカー等)、騎手による過剰人気への懐疑
+4.5. (補助的加点材料、あくまでおまけ): 装備変更 (ブリンカー等)、騎手による過剰人気への懐疑、
+   馬場適性(heavy_track_aptitude。重・不良馬場での複勝率が良・稍重時と比べて明確に高い/低い場合の
+   「重馬場巧者/不良馬場を苦手とする傾向」。サンプルが少ない馬は「判定不能」と明記されるので、
+   その場合は無視して他の軸で判断すること。あくまで補助材料であり、絶対能力やバイアス適性を覆す
+   根拠には使わないこと)
 6. コース×距離ごとの枠順データ評価: 例えば阪神芝1200mは外枠有利、のようなコース特性ごとの枠順傾向。
    **特にダートは枠順による有利不利が芝以上にはっきり出やすい傾向があるため、重点的に確認すること。**
    過去3年程度の傾向、または直近(前日・先週)の同条件レースで特定の枠が抜けて残っている/伸びているような
@@ -812,6 +816,41 @@ function inferWideTripRisk(
   return stayedForwardThroughout;
 }
 
+// 良・稍重(通常)と重・不良(重馬場)での複勝率を比較し、「重馬場巧者/不良馬場を苦手とする傾向」を
+// 機械判定する(2026-08-05、ユーザー要望で新設)。past_performances全体の約17%程度しか重・不良の
+// 出走が無い(2026-08-04のトラックバイアス分析時に確認)ため、大半の馬は判定不能になる想定。
+// サンプル不足を「互角」と誤読させないよう、最低出走数に満たない場合は明示的に判定不能の文言を返す。
+const HEAVY_TRACK_CONDITIONS = new Set(["重", "不良"]);
+const MIN_HEAVY_STARTS = 3;
+const HEAVY_TRACK_APTITUDE_THRESHOLD_POINTS = 15;
+
+function computeHeavyTrackAptitude(pastPerformances: PastPerformanceRow[]): string {
+  const withResult = pastPerformances.filter(
+    (pp): pp is PastPerformanceRow & { track_condition: string; finish_position: number; entry_count: number } =>
+      !!pp.track_condition && pp.finish_position != null && pp.finish_position > 0 && !!pp.entry_count,
+  );
+  const heavy = withResult.filter((pp) => HEAVY_TRACK_CONDITIONS.has(pp.track_condition));
+  const normal = withResult.filter((pp) => !HEAVY_TRACK_CONDITIONS.has(pp.track_condition));
+  if (heavy.length < MIN_HEAVY_STARTS) {
+    return `重・不良馬場での出走実績が少なく判定不能(${heavy.length}走)`;
+  }
+  const placeRatePct = (rows: typeof heavy) =>
+    Math.round((rows.filter((r) => r.finish_position <= 3).length / rows.length) * 100);
+  const heavyRate = placeRatePct(heavy);
+  if (normal.length === 0) {
+    return `重馬場巧拙は評価保留(重・不良${heavy.length}走 複勝率${heavyRate}%、比較用の通常馬場データなし)`;
+  }
+  const normalRate = placeRatePct(normal);
+  const diff = heavyRate - normalRate;
+  const label =
+    diff >= HEAVY_TRACK_APTITUDE_THRESHOLD_POINTS
+      ? "重馬場巧者"
+      : diff <= -HEAVY_TRACK_APTITUDE_THRESHOLD_POINTS
+        ? "重馬場を苦手とする傾向"
+        : "馬場による複勝率の大差なし";
+  return `${label}(重・不良${heavy.length}走 複勝率${heavyRate}% 対 良・稍重${normal.length}走 複勝率${normalRate}%)`;
+}
+
 function serializePastPerformance(pp: PastPerformanceRow) {
   return {
     race_date: pp.race_date,
@@ -926,6 +965,7 @@ function serializeEntry(input: EntryDiagnosisInput) {
     equipment_note: input.entry.equipment_note,
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
+    heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
     past_performances: input.pastPerformances.map(serializePastPerformance),
     pedigree: serializePedigree(input.pedigree),
     training_sessions: input.trainingSessions.map(serializeTrainingSession),
@@ -992,6 +1032,7 @@ function serializeStandardEntry(input: EntryDiagnosisInput) {
     equipment_note: input.entry.equipment_note,
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
+    heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
     past_performances: input.pastPerformances
       .slice(0, STANDARD_PAST_PERFORMANCE_LIMIT)
       .map(serializePastPerformance),
