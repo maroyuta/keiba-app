@@ -429,6 +429,38 @@ def parse_sk(data: bytes) -> dict:
     return d
 
 
+def parse_slop(data: bytes) -> dict:
+    """JV_HC_HANRO(坂路調教情報)。58バイト固定長。
+
+    record_spec(2)+data_kubun(1)+make_date(8)の共通ヘッダに続く残り47バイトのうち、
+    先頭34バイト(トレセン区分1+調教年月日時刻12+血統登録番号10=23...実際は
+    tc(1)+date(8)+time(4)+ketto_num(10)=23、ヘッダ11込みで34)は実データ64,357件で
+    統計検証済み(2026-08-05): 調教時刻が終日4〜9時台に収まる(トレセン早朝調教の実態と
+    完全一致)、血統登録番号の生年部分が2015〜2023の実在範囲に収まる、など。
+    **一方で1バイト目の"tc"はJV-Data仕様書上「トレセン区分(美浦/栗東)」とされているが、
+    horses.trainer_affiliation(netkeiba由来の実データ)と突き合わせたところ一致しなかった
+    (同じtc=0の馬に美浦・栗東どちらも混在)。何を表す値かは不明のため、raw値のみ保持し
+    施設(facility)としては使わない(load_to_supabase.py側でNoneのまま)。**
+    残り24バイト("4/3/2/1ハロンの合計タイムとラップタイム"に相当するはずの区間)も、
+    単調減少チェック(cumulative想定)で最良でも69.8%の整合率にとどまり、公式仕様書
+    (JVData_Struct.cs相当)を確認できないまま確定できなかったため、raw文字列のまま
+    time_fields_raw に保持するのみで、意味付け(何ハロン地点の何か)はしていない。
+    使う場合は必ずJRA-VAN公式仕様書で裏取りしてから対応すること。
+    """
+    c = ByteCursor(data)
+    d = {}
+    parse_record_id(c, d)
+    d["tc_raw"] = c.take(1)  # 意味不明の1バイト(仕様書上は「トレセン区分」だが実データと不一致)
+    d["training_year"] = c.take(4)
+    d["training_month"] = c.take(2)
+    d["training_day"] = c.take(2)
+    d["training_hour"] = c.take(2)
+    d["training_minute"] = c.take(2)
+    d["ketto_num"] = c.take(10)
+    d["time_fields_raw"] = c.take(24)  # 8x3バイト、意味未確定(上記docstring参照)
+    return d
+
+
 PARSERS = {
     "RA": parse_ra,
     "SE": parse_se,
@@ -439,6 +471,7 @@ PARSERS = {
     "O1": parse_o1,
     "HN": parse_hn,
     "SK": parse_sk,
+    "HC": parse_slop,
 }
 
 

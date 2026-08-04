@@ -315,6 +315,27 @@ def compute_blinkers_change(
     return "新規" if blinker_raw else "解除"
 
 
+def build_training_session_payload(row: dict, horse_id: str) -> "dict | None":
+    """HC_parsed.csv(parse_slop出力)の1行からtraining_sessionsのpayloadを組み立てる。
+    区間タイム(time_fields_raw)はバイト位置が未確定のため書き込まない
+    (scripts/jvlink/parse_records.pyのparse_slopのdocstring参照)。lap_times_secは
+    NOT NULL制約のため空オブジェクトを入れる(=「調教した事実は分かるが区間タイムは無い」)。"""
+    year, month, day = row.get("training_year", ""), row.get("training_month", ""), row.get("training_day", "")
+    if not (year.isdigit() and month.isdigit() and day.isdigit()):
+        return None
+    hour, minute = row.get("training_hour", ""), row.get("training_minute", "")
+    training_time = f"{hour}:{minute}:00" if hour.isdigit() and minute.isdigit() else None
+    return {
+        "horse_id": horse_id,
+        "training_date": f"{year}-{month}-{day}",
+        "training_time": training_time,
+        "training_type": "坂路",
+        "facility": None,  # tc_rawの意味が実データと不一致で確定できないため未設定(parse_slop docstring参照)
+        "lap_times_sec": {},
+        "data_source": "jv_link",
+    }
+
+
 def build_odds_updates(row: dict) -> list:
     """O1_parsed.csvの1行(1レース分、単勝オッズは最大28頭分がフラット化されている)から、
     race_entries.odds_win / expected_popularity を更新するための(horse_number, odds_win,
@@ -499,6 +520,12 @@ def main() -> None:
         "--sk-csv",
         help="SK_parsed.csv(産駒マスタ、3代血統)のパス。指定時はhorse_pedigreesへupsertする"
         "(--hn-csvも必須)",
+    )
+    parser.add_argument(
+        "--hc-csv",
+        help="HC_parsed.csv(坂路調教情報)のパス。指定時はtraining_sessionsへupsertする。"
+        "調教年月日時刻・血統登録番号のみ書き込む(区間タイムはバイト位置未確定のため"
+        "2026-08-05時点では書き込まない、scripts/jvlink/parse_records.pyのparse_slop参照)",
     )
     args = parser.parse_args()
 
@@ -823,6 +850,61 @@ def main() -> None:
             print(
                 f"[horse_pedigrees] {len(pedigree_results)}件 upsert完了 "
                 f"(対象馬未登録でスキップ={pedigree_skipped_no_horse})",
+                file=sys.stderr,
+            )
+
+    if args.hc_csv:
+        if not os.path.exists(args.hc_csv):
+            print(f"[training_sessions] {args.hc_csv} が見つからないためスキップ", file=sys.stderr)
+        else:
+            with open(args.hc_csv, encoding="utf-8") as f:
+                hc_rows = list(csv.DictReader(f))
+            print(f"[読み込み] HC={len(hc_rows)}件", file=sys.stderr)
+
+            jv_ids_needed = sorted(
+                {r["ketto_num"] for r in hc_rows if (r.get("ketto_num") or "").strip()}
+                - horse_id_by_jv_id.keys()
+            )
+            if jv_ids_needed:
+                chunk_size = 100
+                for i in range(0, len(jv_ids_needed), chunk_size):
+                    chunk = jv_ids_needed[i : i + chunk_size]
+                    lookup = client.select(
+                        "horses",
+                        {"jv_horse_id": f"in.({','.join(chunk)})", "select": "id,jv_horse_id"},
+                    )
+                    for h in lookup:
+                        horse_id_by_jv_id[h["jv_horse_id"]] = h["id"]
+
+            training_payloads = []
+            training_skipped_no_horse = 0
+            training_skipped_bad_data = 0
+            for row in hc_rows:
+                horse_id = horse_id_by_jv_id.get(row.get("ketto_num"))
+                if not horse_id:
+                    # このアプリのhorsesにまだ登録されていない馬(race_entriesに未出走)は対象外
+                    # (horse_pedigreesと同じ方針。出走後にhorsesへ登録されれば次回以降拾われる)。
+                    training_skipped_no_horse += 1
+                    continue
+                payload = build_training_session_payload(row, horse_id)
+                if payload is None:
+                    training_skipped_bad_data += 1
+                    continue
+                training_payloads.append(payload)
+
+            training_payloads = dedupe_by_key(
+                training_payloads,
+                lambda p: (p["horse_id"], p["training_date"], p["training_time"], p["training_type"]),
+            )
+            training_results = client.upsert(
+                "training_sessions",
+                training_payloads,
+                on_conflict="horse_id,training_date,training_time,training_type",
+            )
+            print(
+                f"[training_sessions] {len(training_results)}件 upsert完了 "
+                f"(対象馬未登録でスキップ={training_skipped_no_horse}, "
+                f"日時不正でスキップ={training_skipped_bad_data})",
                 file=sys.stderr,
             )
 

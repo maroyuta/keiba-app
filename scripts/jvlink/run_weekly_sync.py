@@ -122,6 +122,14 @@ def compute_blod_fromtime() -> str:
     return compute_fromtime("last_sync_blod.txt", "19860101000000")
 
 
+def compute_slop_fromtime() -> str:
+    # 坂路調教情報(HC)は美浦・栗東合わせて日1回・約2000件/日発生する(2026-08-05調査)。
+    # BLODと違い日々増え続けるデータのため、1986年からの全件取得はしない。初回のみ直近7日分
+    # (RACEと同じ考え方)から始め、以降はlast_sync_slop.txtの差分のみ取得する。
+    fallback = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y%m%d%H%M%S")
+    return compute_fromtime("last_sync_slop.txt", fallback)
+
+
 def main() -> None:
     if not ENV_FILE.exists():
         print(
@@ -139,10 +147,12 @@ def main() -> None:
     log_path = LOG_DIR / f"sync_{datetime.datetime.now():%Y%m%d_%H%M%S}.log"
     race_fromtime = compute_race_fromtime()
     blod_fromtime = compute_blod_fromtime()
+    slop_fromtime = compute_slop_fromtime()
 
     with open(log_path, "w", encoding="utf-8") as log:
         print(
-            f"[週次同期開始] race_fromtime={race_fromtime} blod_fromtime={blod_fromtime}",
+            f"[週次同期開始] race_fromtime={race_fromtime} blod_fromtime={blod_fromtime} "
+            f"slop_fromtime={slop_fromtime}",
             file=log,
             flush=True,
         )
@@ -190,6 +200,27 @@ def main() -> None:
                     str(OUT_DIR / "HN_parsed.csv"),
                     "--sk-csv",
                     str(OUT_DIR / "SK_parsed.csv"),
+                ],
+                log,
+            )
+            # SLOP(坂路調教情報HC)。option=2(今週データ)には含まれないためBLODと同じくoption=1。
+            # 区間タイムはバイト位置未確定のため書き込まない(load_to_supabase.pyのbuild_training_session_payload
+            # 参照)。調教日時・馬の対応だけでも「直近いつ調教したか」という recency シグナルとして使える。
+            run(
+                ["py", PY32_TAG, "fetch_raw.py", "SLOP", slop_fromtime, "1", str(OUT_DIR)],
+                log,
+            )
+            run([sys.executable, "parse_records.py", str(OUT_DIR), str(OUT_DIR)], log)
+            run(
+                [
+                    sys.executable,
+                    "load_to_supabase.py",
+                    str(OUT_DIR / "RA_parsed.csv"),
+                    str(OUT_DIR / "SE_parsed.csv"),
+                    "--env-file",
+                    str(ENV_FILE),
+                    "--hc-csv",
+                    str(OUT_DIR / "HC_parsed.csv"),
                 ],
                 log,
             )
