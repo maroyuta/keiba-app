@@ -6,7 +6,28 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
-## 🐎 ブリンカー配線・重馬場適性・坂路調教(部分)を実装 (2026-08-05、Windowsセッション) ★次回はここから読む
+## 📊 過去走ごとの馬別バイアス有利不利判定を新設 (2026-08-05、続き) ★次回はここから読む
+
+「トラックバイアスをレース単位だけでなく、各馬の過去走一走ずつ有利だったか不利だったか知りたい」
+というユーザー要望。`past_performances.bias_note`は既に48%(39,546件)埋まっていたが
+(例の謎の並行セッションが手動SQLで書いた"[実測v2]"形式、レース単位の説明のみで個別馬の
+有利不利判定は無かった)、これを自動化しつつ**馬ごとの判定を追加**した。
+
+**`scripts/compute_past_performance_bias.py`新規実装。** races/race_entries(JV-Link)経由だと
+past_performancesの16%しかマッチしなかったため、**past_performances自体を(race_date,
+keibajo_name, race_number)で自己結合**する設計にした(races非依存のため66%=54,164件をカバー、
+5頭未満のグループは対象外)。レース単位の枠・脚質バイアスはcompute_actual_bias.pyと同じロジックで
+算出し、そこに**この馬自身の枠・脚質がバイアスの有利側/不利側どちらだったかを判定してbias_note末尾に
+追記**(「→ この馬はバイアス有利/不利だった中での結果」「影響は混在(枠・脚質で相殺)」)。
+実装中、PostgRESTのupsert(on_conflict)は既存行の更新であってもINSERT相当の行を組み立てようとし、
+payloadに含めない列(horse_id等NOT NULL)がnull扱いでエラーになる問題を発見
+(1行ずつPATCHは5万件超で非現実的な速度になるため)、`bulk_update_past_performance_bias`という
+RPC(`jsonb_to_recordset`でid×bias_noteのペアをまとめて渡し、SQL側で一括UPDATE)を新設して解決。
+53,600件更新済み(有利17,716/不利20,014/相殺9,341/バイアス自体フラット6,529)、分布は妥当。
+Windows Task Schedulerに`ComputePastPerformanceBias`(毎週月曜08:30、ComputeActualBiasの後、
+past_performancesが必要なためSyncNetkeibaRecent 08:00の後段)を新規登録、実行成功確認済み。
+
+## 🐎 ブリンカー配線・重馬場適性・坂路調教を実装 (2026-08-05、Windowsセッション)
 
 ユーザーから3つの積み残しタスクを一気に頼まれた: (1) 馬具(ブリンカー)フラグのDB配線、
 (2) 重馬場適性データ、(3) 血統・調教データの活用。血統(BLOD)はJRA-VAN契約の権限問題で

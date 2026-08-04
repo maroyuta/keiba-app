@@ -204,8 +204,9 @@ def main() -> None:
                 log,
             )
             # SLOP(坂路調教情報HC)。option=2(今週データ)には含まれないためBLODと同じくoption=1。
-            # 区間タイムはバイト位置未確定のため書き込まない(load_to_supabase.pyのbuild_training_session_payload
-            # 参照)。調教日時・馬の対応だけでも「直近いつ調教したか」という recency シグナルとして使える。
+            # 区間タイム(lap_times_sec/total_time_sec)を含めtraining_sessionsへ書き込む
+            # (2026-08-05、netkeiba公表値との突き合わせでバイト位置確定済み。詳細はparse_records.pyの
+            # parse_slop docstring参照)。
             run(
                 ["py", PY32_TAG, "fetch_raw.py", "SLOP", slop_fromtime, "1", str(OUT_DIR)],
                 log,
