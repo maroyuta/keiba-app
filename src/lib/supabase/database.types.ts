@@ -197,6 +197,54 @@ export type Database = {
         }
         Relationships: []
       }
+      jockey_stats: {
+        Row: {
+          as_of_date: string | null
+          created_at: string
+          data_source: string
+          id: string
+          jockey_name: string
+          place_rate: number | null
+          roi_win_pct: number | null
+          starts: number | null
+          stat_category: string
+          stat_key: string
+          updated_at: string
+          win_rate: number | null
+          wins: number | null
+        }
+        Insert: {
+          as_of_date?: string | null
+          created_at?: string
+          data_source: string
+          id?: string
+          jockey_name: string
+          place_rate?: number | null
+          roi_win_pct?: number | null
+          starts?: number | null
+          stat_category: string
+          stat_key: string
+          updated_at?: string
+          win_rate?: number | null
+          wins?: number | null
+        }
+        Update: {
+          as_of_date?: string | null
+          created_at?: string
+          data_source?: string
+          id?: string
+          jockey_name?: string
+          place_rate?: number | null
+          roi_win_pct?: number | null
+          starts?: number | null
+          stat_category?: string
+          stat_key?: string
+          updated_at?: string
+          win_rate?: number | null
+          wins?: number | null
+        }
+        Relationships: []
+      }
       nick_stats: {
         Row: {
           as_of_date: string | null
@@ -510,6 +558,7 @@ export type Database = {
       race_entries: {
         Row: {
           actual_popularity: number | null
+          blinker_raw: boolean | null
           blinkers_change: string | null
           created_at: string
           equipment_note: string | null
@@ -535,6 +584,7 @@ export type Database = {
         }
         Insert: {
           actual_popularity?: number | null
+          blinker_raw?: boolean | null
           blinkers_change?: string | null
           created_at?: string
           equipment_note?: string | null
@@ -560,6 +610,7 @@ export type Database = {
         }
         Update: {
           actual_popularity?: number | null
+          blinker_raw?: boolean | null
           blinkers_change?: string | null
           created_at?: string
           equipment_note?: string | null
@@ -998,6 +1049,36 @@ export type Database = {
         }
         Relationships: []
       }
+      trainer_training_baselines: {
+        Row: {
+          avg_total_time_sec: number | null
+          computed_at: string
+          id: string
+          sample_size: number
+          stddev_total_time_sec: number | null
+          trainer_name: string
+          training_type: string
+        }
+        Insert: {
+          avg_total_time_sec?: number | null
+          computed_at?: string
+          id?: string
+          sample_size: number
+          stddev_total_time_sec?: number | null
+          trainer_name: string
+          training_type: string
+        }
+        Update: {
+          avg_total_time_sec?: number | null
+          computed_at?: string
+          id?: string
+          sample_size?: number
+          stddev_total_time_sec?: number | null
+          trainer_name?: string
+          training_type?: string
+        }
+        Relationships: []
+      }
       training_sessions: {
         Row: {
           ashi_iro: string | null
@@ -1065,6 +1146,47 @@ export type Database = {
             columns: ["horse_id"]
             isOneToOne: false
             referencedRelation: "horses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_bets: {
+        Row: {
+          bet_type: string
+          combination: string
+          created_at: string
+          id: string
+          note: string | null
+          race_id: string
+          stake_yen: number
+          updated_at: string
+        }
+        Insert: {
+          bet_type: string
+          combination: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          race_id: string
+          stake_yen: number
+          updated_at?: string
+        }
+        Update: {
+          bet_type?: string
+          combination?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          race_id?: string
+          stake_yen?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_bets_race_id_fkey"
+            columns: ["race_id"]
+            isOneToOne: false
+            referencedRelation: "races"
             referencedColumns: ["id"]
           },
         ]
@@ -1170,7 +1292,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      bulk_update_past_performance_bias: {
+        Args: { updates: Json }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
@@ -1336,7 +1461,12 @@ export type PipelineJobName =
   | "jvlink_weekly_sync"
   | "compute_recommendation_results"
   | "sync_netkeiba_recent"
-  | "sync_netkeiba_shutuba";
+  | "sync_netkeiba_shutuba"
+  | "compute_actual_bias"
+  | "compute_past_performance_bias"
+  | "compute_sire_nick_stats"
+  | "compute_jockey_stats"
+  | "compute_trainer_baselines";
 export type PipelineRunStatus = "running" | "success" | "failed";
 export type OddsCombinationBetType = "umaren" | "wide";
 
@@ -1352,6 +1482,8 @@ export type RaceCriteriaScoreRow = Tables<"race_criteria_scores">;
 export type TrainingSessionRow = Tables<"training_sessions">;
 export type SireStatRow = Tables<"sire_stats">;
 export type NickStatRow = Tables<"nick_stats">;
+export type JockeyStatRow = Tables<"jockey_stats">;
+export type TrainerTrainingBaselineRow = Tables<"trainer_training_baselines">;
 export type ApiUsageLogRow = Tables<"api_usage_log">;
 export type RacePayoutRow = Tables<"race_payouts">;
 export type RaceRecommendationResultRow = Tables<"race_recommendation_results">;

@@ -5,6 +5,8 @@ import type {
   TrainingSessionRow,
   SireStatRow,
   NickStatRow,
+  JockeyStatRow,
+  TrainerTrainingBaselineRow,
   RaceEntryRow,
   PastPerformanceRow,
   RaceEntryCriteriaScoreRow,
@@ -23,6 +25,8 @@ export interface EntryDiagnosisInput {
   trainingSessions: TrainingSessionRow[];
   sireStats: SireStatRow[];
   nickStats: NickStatRow[];
+  jockeyStats: JockeyStatRow[];
+  trainerBaseline: TrainerTrainingBaselineRow | null;
 }
 
 export interface BiasReferenceRace {
@@ -568,13 +572,22 @@ const PEDIGREE_TRAINING_RULES = `## 血統・調教データの扱い
   少ない(目安10未満)統計は参考程度に留め、断定的な根拠にしない
 - **調教 (training_sessions)**: 絶対タイムでの閾値判定はしない。同じ馬の直近セッション同士の相対比較
   (自己ベース比で今回は良化/悪化しているか) を基本にする。lap_times_secはゴール手前メートル数をキーにした
-  ラップタイムなので、末脚(200/400地点)のタイムに注目するとよい。厩舎(trainer_name)の「本気パターン」との
-  比較データがある場合はそれも使うが、無い場合は自己ベース比だけで判断し、無理に決めつけない
+  ラップタイムなので、末脚(200/400地点)のタイムに注目するとよい。
   - **★2026-08-05、JV-Link坂路調教データ(HC)のバイト位置をnetkeiba公表値との実データ突き合わせで
     確定し、lap_times_sec/total_time_secへ書き込むようになった(scripts/jvlink/parse_records.pyの
     parse_slop docstring参照)。ただし2026-08-05より前にsyncされたレースには坂路データが無いこと、
     また全馬に毎週データがあるわけではないことに留意し、training_sessions自体が空配列の馬については
-    無理に何かを言わず「調教データなし」として扱うこと**`;
+    無理に何かを言わず「調教データなし」として扱うこと**
+  - **★trainer_baseline(2026-08-05新設)は、その馬の管理厩舎(trainer_name)全体の坂路total_time_secの
+    平均・標準偏差(sample_size件のセッションから算出)。個々のtotal_time_secがこの平均よりstddev以上
+    速ければ「その厩舎にしては速い=気配良好・本気モードの可能性」、逆に遅ければ「その厩舎にしては
+    平凡」と読む。厩舎ごとに坂路の「本気の入れ方」(全馬同じペースで乗るか、詰めの1本だけ本気か等)が
+    違うため、他厩舎との絶対比較はしないこと。trainer_baselineがnull(サンプル5件未満)の場合は
+    この判断軸自体を使わない**
+- **騎手 (jockey_stats、2026-08-05新設)**: sire_stats/nick_statsと同じ形式(コース/馬場/距離帯別の
+  starts/win_rate/place_rate/roi_win_pct)。「このジョッキーはこの競馬場/距離/馬場が得意」という
+  補助材料に使うが、乗り替わりで結果が変わりうるため、馬自身の絶対能力・展開適性を覆す根拠には
+  しないこと。starts件数が少ない(目安10未満)統計は参考程度に留める(sire_stats/nick_statsと同じ方針)`;
 
 const RACE_RANK_RULES = `## レース投資判断
 
@@ -927,7 +940,7 @@ function serializeTrainingSession(session: TrainingSessionRow) {
   };
 }
 
-function serializePedigreeStat(stat: SireStatRow | NickStatRow) {
+function serializePedigreeStat(stat: SireStatRow | NickStatRow | JockeyStatRow) {
   return {
     stat_category: stat.stat_category,
     stat_key: stat.stat_key,
@@ -936,6 +949,16 @@ function serializePedigreeStat(stat: SireStatRow | NickStatRow) {
     win_rate: stat.win_rate,
     place_rate: stat.place_rate,
     roi_win_pct: stat.roi_win_pct,
+  };
+}
+
+function serializeTrainerBaseline(baseline: TrainerTrainingBaselineRow | null) {
+  if (!baseline) return null;
+  return {
+    training_type: baseline.training_type,
+    sample_size: baseline.sample_size,
+    avg_total_time_sec: baseline.avg_total_time_sec,
+    stddev_total_time_sec: baseline.stddev_total_time_sec,
   };
 }
 
@@ -978,8 +1001,10 @@ function serializeEntry(input: EntryDiagnosisInput) {
     past_performances: input.pastPerformances.map(serializePastPerformance),
     pedigree: serializePedigree(input.pedigree),
     training_sessions: input.trainingSessions.map(serializeTrainingSession),
+    trainer_baseline: serializeTrainerBaseline(input.trainerBaseline), // 厩舎の坂路平均タイム(2026-08-05追加、下記PEDIGREE_TRAINING_RULES参照)
     sire_stats: input.sireStats.map(serializePedigreeStat),
     nick_stats: input.nickStats.map(serializePedigreeStat),
+    jockey_stats: input.jockeyStats.map(serializePedigreeStat), // 騎手のコース/馬場/距離帯別成績(2026-08-05追加)
     criteria_scores: input.criteriaScores.map(serializeCriteriaScore),
   };
 }

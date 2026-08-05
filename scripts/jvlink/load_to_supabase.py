@@ -270,6 +270,10 @@ def build_entry_payload(row: dict, race_id: str, horse_id: str) -> dict:
         "post_position": to_int(row.get("wakuban", "")),
         "horse_number": to_int(row.get("umaban", "")),
         "jockey_name": row.get("kisyu_ryakusyo") or None,
+        # レース時点の管理調教師のスナップショット(horses.trainer_nameは「現在の」管理調教師のみで
+        # 乗り替わり履歴を追えないため、race_entries側にも同じSE由来の値を都度保持する。
+        # 2026-08-05、trainer_training_baselinesとの突き合わせで列自体が空のまま放置されていたと判明)。
+        "trainer_name": row.get("chokyosi_ryakusyo") or None,
         # 斤量は10倍値で格納されている想定 (例: "550" -> 55.0kg)。要検証。
         "jockey_weight_kg": to_float_scaled(row.get("futan", ""), 10),
         "horse_weight_kg": to_int(row.get("ba_taijyu", "")),
@@ -315,7 +319,7 @@ def compute_blinkers_change(
     return "新規" if blinker_raw else "解除"
 
 
-def build_training_session_payload(row: dict, horse_id: str) -> "dict | None":
+def build_training_session_payload(row: dict, horse_id: str, trainer_name: "str | None") -> "dict | None":
     """HC_parsed.csv(parse_slop出力)の1行からtraining_sessionsのpayloadを組み立てる。
     区間タイムはnetkeiba公表値(ロードトレイル、2026-07-29)との実データ突き合わせでバイト位置を
     確定済み(scripts/jvlink/parse_records.pyのparse_slop docstring参照)。lap_times_secは
@@ -347,6 +351,7 @@ def build_training_session_payload(row: dict, horse_id: str) -> "dict | None":
 
     return {
         "horse_id": horse_id,
+        "trainer_name": trainer_name,  # 調教時点の管理調教師スナップショット(厩舎単位の集計用)
         "training_date": f"{year}-{month}-{day}",
         "training_time": training_time,
         "training_type": "坂路",
@@ -882,6 +887,12 @@ def main() -> None:
                 hc_rows = list(csv.DictReader(f))
             print(f"[読み込み] HC={len(hc_rows)}件", file=sys.stderr)
 
+            # trainer_name(調教時点の管理調教師スナップショット)は今回のSEバッチに含まれる馬なら
+            # horse_payloads_by_idから、そうでなければ以下のフォールバック問い合わせから解決する。
+            trainer_name_by_jv_id = {
+                jv_id: payload.get("trainer_name") for jv_id, payload in horse_payloads_by_id.items()
+            }
+
             jv_ids_needed = sorted(
                 {r["ketto_num"] for r in hc_rows if (r.get("ketto_num") or "").strip()}
                 - horse_id_by_jv_id.keys()
@@ -892,22 +903,24 @@ def main() -> None:
                     chunk = jv_ids_needed[i : i + chunk_size]
                     lookup = client.select(
                         "horses",
-                        {"jv_horse_id": f"in.({','.join(chunk)})", "select": "id,jv_horse_id"},
+                        {"jv_horse_id": f"in.({','.join(chunk)})", "select": "id,jv_horse_id,trainer_name"},
                     )
                     for h in lookup:
                         horse_id_by_jv_id[h["jv_horse_id"]] = h["id"]
+                        trainer_name_by_jv_id[h["jv_horse_id"]] = h.get("trainer_name")
 
             training_payloads = []
             training_skipped_no_horse = 0
             training_skipped_bad_data = 0
             for row in hc_rows:
-                horse_id = horse_id_by_jv_id.get(row.get("ketto_num"))
+                ketto_num = row.get("ketto_num")
+                horse_id = horse_id_by_jv_id.get(ketto_num)
                 if not horse_id:
                     # このアプリのhorsesにまだ登録されていない馬(race_entriesに未出走)は対象外
                     # (horse_pedigreesと同じ方針。出走後にhorsesへ登録されれば次回以降拾われる)。
                     training_skipped_no_horse += 1
                     continue
-                payload = build_training_session_payload(row, horse_id)
+                payload = build_training_session_payload(row, horse_id, trainer_name_by_jv_id.get(ketto_num))
                 if payload is None:
                     training_skipped_bad_data += 1
                     continue

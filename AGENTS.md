@@ -6,7 +6,47 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 競馬予想Webアプリ
 
-## 📊 過去走ごとの馬別バイアス有利不利判定を新設 (2026-08-05、続き) ★次回はここから読む
+## 🏇 種牡馬・配合統計の自動化+騎手成績・厩舎調教ベースラインを新設 (2026-08-05、さらに続き) ★次回はここから読む
+
+「プロンプトを読み返してもっと情報が取れる箇所を提案して」という依頼から、同じ「一度手動計算されたきり
+放置」パターンを`sire_stats`/`nick_stats`にも発見(2026-07-26に手動SQLで計算されたきり自動更新なし)。
+これの自動化に加え、ユーザー了承のもと新規に「騎手成績」「厩舎の調教本気度ベースライン」も実装した。
+
+**1. `scripts/compute_sire_nick_stats.py`新規実装。** `horses.sire_name/dam_sire_name`
+(BLODブロックとは無関係、netkeiba由来で74%の馬に既に入っている)×past_performances自己集計。
+data_source文字列・stat_key書式(course/track_type/distance_band)は既存データと同一に揃え、
+参照コード側(route.ts)の変更なしで置き換わるようにした。starts数は前回計算時より増加
+(ドレフォン芝: 381→443等、データが日々蓄積されている証拠)。
+
+**2. `jockey_stats`テーブル新規作成、`scripts/compute_jockey_stats.py`実装。** sire_stats/nick_stats
+と全く同じ設計・ロジック(past_performances.jockey_nameで集計)。ユーザーが以前出していた
+「騎手のコース得意不得意」アイデアの実装。5,279グループ算出。
+
+**3. `trainer_training_baselines`テーブル新規作成、`scripts/compute_trainer_baselines.py`実装。**
+training_sessions再設計時(20260710070000)から「次回以降の課題」として積み残されていたもの
+(区間タイムが無ければ作りようがなかったが、今日確定したので着手可能になった)。厩舎(trainer_name)×
+training_type別にtotal_time_secの平均・標準偏差を算出、364厩舎分。**実装の過程で
+`training_sessions.trainer_name`(スキーマにはあったがload_to_supabase.pyが一度も書き込んでいなかった)
+と`race_entries.trainer_name`(同じく列はあったが未使用だった)の2箇所を発見・修正・バックフィルした
+(それぞれ33,611件・13,533件)。** どちらも「スキーマは先に作られたがローダー側の配線が漏れていた」
+という、このセッションで繰り返し発見しているのと同じ種類の穴だった。
+
+**実装中に見つけたバグ: PostgRESTのupsert(`Prefer: return=minimal`)は204(空ボディ)を返すため、
+JSON前提の共通リクエスト関数でパースしようとしてクラッシュした。** 3スクリプトとも空ボディ対応の
+専用upsertメソッドに直す形で対処(compute_past_performance_biasのRPC空ボディ対応と同種の問題)。
+また`roi_win_pct`(`numeric(6,2)`)がstarts=1×高配当のケースで桁あふれしたため±9999.99にクリップ。
+
+**TypeScript側配線:** `database.types.ts`をSupabase MCPの`generate_typescript_types`で再生成
+(jockey_stats/trainer_training_baselines追加)、`prompts.ts`の`EntryDiagnosisInput`に
+`jockeyStats`/`trainerBaseline`を追加しPEDIGREE_TRAINING_RULESに使い方を追記、`route.ts`で
+jockey_name/trainer_nameによるtextマッチフェッチを追加(sire_stats/nick_statsと同じパターン)。
+premium tierのみ(standardは元々血統・調教系を渡さない設計を踏襲)。`tsc --noEmit`通過確認済み。
+
+Windows Task Schedulerに3つ追加: `ComputeSireNickStats`(月08:45)・`ComputeJockeyStats`(月08:50)・
+`ComputeTrainerBaselines`(月08:55)、いずれも実行成功確認済み。`PipelineStatusBanner.tsx`の
+ジョブ一覧表示も更新。
+
+## 📊 過去走ごとの馬別バイアス有利不利判定を新設 (2026-08-05、続き)
 
 「トラックバイアスをレース単位だけでなく、各馬の過去走一走ずつ有利だったか不利だったか知りたい」
 というユーザー要望。`past_performances.bias_note`は既に48%(39,546件)埋まっていたが

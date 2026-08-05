@@ -528,6 +528,30 @@ async function loadRaceDiagnosisInput(
     nickStatsByPair.set(key, list);
   }
 
+  // 騎手成績 (jockey_stats、2026-08-05新設): sire_stats/nick_statsと同じtextマッチ方式。
+  const jockeyNames = [...new Set(entries.map((entry) => entry.jockey_name).filter((v): v is string => !!v))];
+  const { data: jockeyStats } = await supabase.from("jockey_stats").select("*").in("jockey_name", jockeyNames);
+  const jockeyStatsByName = new Map<string, NonNullable<typeof jockeyStats>>();
+  for (const stat of jockeyStats ?? []) {
+    const list = jockeyStatsByName.get(stat.jockey_name) ?? [];
+    list.push(stat);
+    jockeyStatsByName.set(stat.jockey_name, list);
+  }
+
+  // 厩舎の坂路タイムベースライン (trainer_training_baselines、2026-08-05新設)。
+  // race_entries.trainer_name(レース時点のスナップショット)でマッチする。
+  const trainerNames = [...new Set(entries.map((entry) => entry.trainer_name).filter((v): v is string => !!v))];
+  const { data: trainerBaselines } = await supabase
+    .from("trainer_training_baselines")
+    .select("*")
+    .in("trainer_name", trainerNames);
+  const trainerBaselineByName = new Map<string, NonNullable<typeof trainerBaselines>[number]>();
+  for (const baseline of trainerBaselines ?? []) {
+    // training_type違いが複数件ありうるが、現状「坂路」しか実装していないため単純に上書きでよい
+    // (WOOD実装後、複数件を返すよう拡張する場合はMap<string, Row[]>に変更すること)。
+    trainerBaselineByName.set(baseline.trainer_name, baseline);
+  }
+
   const biasReferences = await findBiasReferenceRaces(supabase, race);
 
   // ワイド・馬連の現在オッズ(組み合わせ単位、JV-Link JVRTOpen "0B30"由来、2026-07-31追加)。
@@ -555,6 +579,8 @@ async function loadRaceDiagnosisInput(
         nickStats: entry.horses.sire_name && entry.horses.dam_sire_name
           ? (nickStatsByPair.get(`${entry.horses.sire_name}::${entry.horses.dam_sire_name}`) ?? [])
           : [],
+        jockeyStats: entry.jockey_name ? (jockeyStatsByName.get(entry.jockey_name) ?? []) : [],
+        trainerBaseline: entry.trainer_name ? (trainerBaselineByName.get(entry.trainer_name) ?? null) : null,
       })),
       raceCriteriaScores: (raceCriteriaScores ?? []).map((rc) => ({
         ...rc,

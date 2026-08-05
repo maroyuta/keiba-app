@@ -13,12 +13,22 @@ const JOB_LABELS: Record<PipelineJobName, string> = {
   compute_recommendation_results: "回収率算出",
   sync_netkeiba_recent: "過去走同期",
   sync_netkeiba_shutuba: "出馬表先回り同期",
+  compute_actual_bias: "実況バイアス算出",
+  compute_past_performance_bias: "過去走バイアス判定",
+  compute_sire_nick_stats: "種牡馬・配合統計算出",
+  compute_jockey_stats: "騎手成績算出",
+  compute_trainer_baselines: "厩舎調教ベースライン算出",
 };
 
 const JOB_ORDER: PipelineJobName[] = [
   "jvlink_weekly_sync",
   "compute_recommendation_results",
   "sync_netkeiba_recent",
+  "compute_actual_bias",
+  "compute_past_performance_bias",
+  "compute_sire_nick_stats",
+  "compute_jockey_stats",
+  "compute_trainer_baselines",
   "sync_netkeiba_shutuba",
 ];
 
