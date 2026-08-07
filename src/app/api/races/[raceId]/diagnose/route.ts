@@ -637,6 +637,51 @@ async function logUsage(
   }
 }
 
+// 少頭数(11頭以下)・極端な鉄板(1番人気が1.5倍未満)のレースは妙味が出ないため購入見送り、という
+// 馬券方針(RACE_RANK_RULES/SCREENING参照)は、これまでプロンプト指示のみで機械的enforcementが無かった。
+// プロンプト文言とコードのズレ(昇級ガードで実害が出た)の再発防止として、書き込み直前にコードでも強制する
+// (2026-08-08、ユーザー指示でハードコード化)。重賞は「race_rankによらず問答無用で購入」ルールが
+// 優先されるため、このガードからは除外する。
+const SMALL_FIELD_MAX = 11;
+const EXTREME_FAVORITE_ODDS = 1.5;
+
+function enforceRaceViabilityGuard(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  if (input.race.grade) return result; // 重賞は対象外(必ず購入)
+  if (result.honmei_horse_number === null && result.aite_horse_number === null) return result;
+  const reasons: string[] = [];
+  const entryCount = input.race.entry_count;
+  if (entryCount !== null && entryCount <= SMALL_FIELD_MAX) {
+    reasons.push(`少頭数(${entryCount}頭≤${SMALL_FIELD_MAX}頭)`);
+  }
+  const oddsList = input.entries
+    .map((e) => e.entry.odds_win)
+    .filter((o): o is number => o !== null);
+  if (oddsList.length > 0) {
+    const favoriteOdds = Math.min(...oddsList);
+    if (favoriteOdds < EXTREME_FAVORITE_ODDS) {
+      reasons.push(`極端な鉄板(1番人気${favoriteOdds}倍<${EXTREME_FAVORITE_ODDS}倍)`);
+    }
+  }
+  if (reasons.length === 0) return result;
+  console.warn(`[viability-guard] ${reasons.join("・")}のため購入を見送り・race_rank=Cに変更`);
+  return {
+    ...result,
+    race_rank: "C",
+    honmei_horse_number: null,
+    aite_horse_number: null,
+    aite_horse_number_2: null,
+    bet_type: null,
+    bet_amount_wide: null,
+    bet_amount_umaren: null,
+    bet_amount_wide_2: null,
+    bet_amount_umaren_2: null,
+    race_rank_reason: `${result.race_rank_reason}\n[自動チェック] ${reasons.join("・")}のため、race_rankをCとし購入を機械的に見送りへ変更した(重賞を除く)。`,
+  };
+}
+
 async function persistDiagnosis(
   supabase: SupabaseAdminClient,
   raceId: string,
@@ -646,7 +691,10 @@ async function persistDiagnosis(
   tier: UsageLogTier,
 ): Promise<void> {
   const result = applyFixedBetSplit(
-    enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult)),
+    enforceRaceViabilityGuard(
+      input,
+      enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult)),
+    ),
   );
   await supabase
     .from("races")
