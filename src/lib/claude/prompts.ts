@@ -686,7 +686,13 @@ const OUTPUT_FORMAT_RULES = `## 出力形式
     {
       "horse_number": number,
       "horse_rank": "S" | "A" | "B" | "C",
-      "horse_rank_comment": string,  // 短評、1行
+      "horse_rank_comment": string,  // 短評、1行。**次の2点を必ず守ること(2026-08-08ユーザー指摘):**
+        // (1) ★データ不足の明示: past_performancesが空/極端に少ない(0〜1走)馬は、血統や馬名から
+        //   それらしい評価を組み立てず、短評の冒頭に必ず「【データ不足・評価不能/信頼度低】」と明記する。
+        //   もっともらしい理由文でCランクを正当化するのは禁止(実例: ネッタイヤライ=過去走なしに血統で
+        //   理由付け、札幌4Rも同種のミス)。データが無いこと自体を目立つ形で伝えるのが目的。
+        // (2) ★バイアス一言: predicted_bias/actual_bias_noteとその馬の枠・脚質が噛み合う/逆らう場合は、
+        //   短評レベルでも一言触れる(まとめ欄任せにしない)。関係が薄いレースでは無理に触れなくてよい。
       "is_kesshi": boolean,
       "kesshi_reason": string | null
     }
@@ -1016,6 +1022,7 @@ function serializeEntry(input: EntryDiagnosisInput) {
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
     heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
+    past_performance_count: input.pastPerformances.length, // ★過去走の総件数。0〜1なら「データ不足・評価不能」を短評冒頭に明記すること(空配列の見落とし防止、2026-08-08)
     past_performances: input.pastPerformances.map(serializePastPerformance),
     pedigree: serializePedigree(input.pedigree),
     training_sessions: input.trainingSessions.map(serializeTrainingSession),
@@ -1087,6 +1094,7 @@ function serializeStandardEntry(input: EntryDiagnosisInput) {
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
     heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
+    past_performance_count: input.pastPerformances.length, // ★過去走の総件数。0〜1なら「データ不足・評価不能」を短評冒頭に明記すること(空配列の見落とし防止、2026-08-08)
     past_performances: input.pastPerformances
       .slice(0, STANDARD_PAST_PERFORMANCE_LIMIT)
       .map(serializePastPerformance),
