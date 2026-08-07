@@ -219,15 +219,27 @@ export default async function RacesPage({
   let usingFallback = false;
 
   // dateが明示されていない(=「今日」を見に来た)のに今日のレースが1件も無い場合
-  // (開催と開催の谷間、または今日が非開催日等)は、直近の開催日を代わりに表示する。
+  // (開催と開催の谷間、または今日が非開催日等)は、「今日以降の一番近い開催日」=次の開催日を表示する。
+  // 以前は「最新の開催日」を拾っていたため、金曜(非開催日)に開くと土曜を飛ばして日曜が出てしまう
+  // 不具合があった(2026-08-08、ユーザー指摘)。今日以降の開催が無い(全て過去)場合のみ過去最新にフォールバックする。
   // 明示的にdateを指定して「この日は無い」場合はそのまま空表示にする(過去日ナビゲーションの挙動を壊さないため)。
   if (rows.length === 0 && !explicitDate) {
-    const { data: latest } = await supabase
+    const { data: upcoming } = await supabase
       .from("races")
       .select("race_date")
-      .order("race_date", { ascending: false })
+      .gte("race_date", todayJst)
+      .order("race_date", { ascending: true })
       .limit(1)
       .maybeSingle();
+    const { data: fallbackRow } = upcoming?.race_date
+      ? { data: upcoming }
+      : await supabase
+          .from("races")
+          .select("race_date")
+          .order("race_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+    const latest = fallbackRow;
     if (latest?.race_date) {
       const { data: fallback } = await supabase
         .from("races")
@@ -262,11 +274,16 @@ export default async function RacesPage({
           <h1 className="text-xl font-bold text-[#f2efe6]">
             {usingFallback ? "直近のレース" : !explicitDate ? "今日のレース" : "レース一覧"}
           </h1>
-          {explicitDate && effectiveDate !== todayJst && (
-            <Link href="/races" className="text-xs text-[#ff9f1c] hover:text-[#ffb44d]">
-              今日に戻る →
+          <div className="flex items-center gap-3">
+            {explicitDate && effectiveDate !== todayJst && (
+              <Link href="/races" className="text-xs text-[#ff9f1c] hover:text-[#ffb44d]">
+                今日に戻る →
+              </Link>
+            )}
+            <Link href="/dashboard" className="text-xs text-[#f2efe6]/60 hover:text-[#ff9f1c]">
+              回収率 →
             </Link>
-          )}
+          </div>
         </div>
 
         <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#f2efe6]/10 bg-[#12241f] px-3 py-2">
