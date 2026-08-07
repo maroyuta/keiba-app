@@ -33,6 +33,16 @@ const TRAINING_SESSION_LIMIT = 3;
 // 判明したため、書き込み直前にコード側で機械的に検証するガードを追加する。
 const MAX_BET_POPULARITY = 9;
 
+// 相手(aite)は4番人気以下(=妙味帯)でなければ買わない。相手が1〜3番人気の「人気サイド同士」の
+// 買い目は、実測で回収率が極端に低い(race_recommendation_results: 本命・相手とも1-3番人気の
+// 組み合わせn=47で回収率48.1%/的中率21.3% ＝ よく当たるが配当が安すぎて大負け。一方、相手が
+// 4-9番人気の妙味帯はn=370で87.0%)。この方針はこれまでプロンプト文言のみで、LLMが毎回
+// 「堅い人気馬の方が信頼できる」と理屈をこねて回避してきた(2026-08-08、ユーザーが繰り返し指摘)。
+// 昇級戦ガードと同じく、文章ではなく書き込み直前のハードブロックとして強制する。
+// 本命(軸)は絶対能力重視で1〜3番人気から選ぶ設計のため対象外。相手側のみに適用する。
+// 重賞は「race_rankによらず問答無用で購入」ルールが優先されるため、このガードからは除外する。
+const MIN_AITE_POPULARITY = 4;
+
 // expected_popularity(レース前オッズ由来、当日随時更新の速報値)が無いデータ(過去のバックテスト対象
 // レース等)でも検証できるよう、odds_win昇順の順位をフォールバックとして常に併用する。
 function buildOddsRankMap(input: RaceDiagnosisInput): Map<number, number> {
@@ -62,6 +72,9 @@ function enforcePopularityGuard(
   result: DiagnosisResult,
 ): DiagnosisResult {
   const oddsRankMap = buildOddsRankMap(input);
+  // 重賞(gradeあり)は「問答無用で購入」ルールが優先されるため、相手の人気下限(妙味帯)ガードは
+  // かけない。相手が人気薄すぎ(>9)の天井ガードは重賞でも従来通り効かせる。
+  const isGraded = !!input.race.grade;
   let updated = result;
   const violations: string[] = [];
 
@@ -76,6 +89,10 @@ function enforcePopularityGuard(
     }
     if (aitePop === null || aitePop > MAX_BET_POPULARITY) {
       primaryViolations.push(`相手${updated.aite_horse_number}番(推定${aitePop ?? "不明"}人気)`);
+    } else if (!isGraded && aitePop < MIN_AITE_POPULARITY) {
+      primaryViolations.push(
+        `相手${updated.aite_horse_number}番(推定${aitePop}番人気=人気サイド、妙味帯${MIN_AITE_POPULARITY}番人気未満)`,
+      );
     }
     if (primaryViolations.length > 0) {
       violations.push(...primaryViolations);
@@ -96,8 +113,12 @@ function enforcePopularityGuard(
   // 相手2単独が人気範囲外の場合は、相手2だけをnullにする(本命×相手1はそのまま活かす)。
   if (updated.honmei_horse_number !== null && updated.aite_horse_number_2 !== null) {
     const aite2Pop = resolvePopularity(updated.aite_horse_number_2, input, oddsRankMap);
-    if (aite2Pop === null || aite2Pop > MAX_BET_POPULARITY) {
-      violations.push(`相手2 ${updated.aite_horse_number_2}番(推定${aite2Pop ?? "不明"}人気)`);
+    const aite2TooPopular = !isGraded && aite2Pop !== null && aite2Pop < MIN_AITE_POPULARITY;
+    if (aite2Pop === null || aite2Pop > MAX_BET_POPULARITY || aite2TooPopular) {
+      const popLabel = aite2TooPopular
+        ? `推定${aite2Pop}番人気=人気サイド、妙味帯${MIN_AITE_POPULARITY}番人気未満`
+        : `推定${aite2Pop ?? "不明"}人気`;
+      violations.push(`相手2 ${updated.aite_horse_number_2}番(${popLabel})`);
       updated = {
         ...updated,
         aite_horse_number_2: null,
@@ -112,11 +133,11 @@ function enforcePopularityGuard(
   }
 
   console.warn(
-    `[popularity-guard] race honmei/aiteが想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)外のため購入を見送りに変更: ${violations.join(", ")}`,
+    `[popularity-guard] 相手が妙味帯(${MIN_AITE_POPULARITY}〜${MAX_BET_POPULARITY}番人気)外のため購入を見送りに変更: ${violations.join(", ")}`,
   );
   return {
     ...updated,
-    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${violations.join("、")}が想定人気範囲(1〜${MAX_BET_POPULARITY}番人気)を超えていたため、購入を機械的に見送りへ変更した。`,
+    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${violations.join("、")}。相手は妙味帯(${MIN_AITE_POPULARITY}〜${MAX_BET_POPULARITY}番人気)から選ぶ必要があるため、購入を機械的に見送りへ変更した。`,
   };
 }
 
