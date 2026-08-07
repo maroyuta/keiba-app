@@ -1059,9 +1059,11 @@ export function buildScreeningPayload(input: RaceDiagnosisInput): string {
 
 // standard(Sonnet)用の中量ペイロード。STANDARD_SYSTEM_PROMPTは血統・調教データの扱いを
 // 指示していない(PEDIGREE_TRAINING_RULESはpremium専用)ため、pedigree/training_sessions/
-// sire_stats/nick_stats/jockey_stats/trainer_baselineは渡さない。過去走もpremiumの5走ではなく
-// 直近3走に絞る(2026-07-13、A/S評価のレースだけpremiumでフル調査する二段階構成に変更したため)。
-const STANDARD_PAST_PERFORMANCE_LIMIT = 3;
+// sire_stats/nick_stats/jockey_stats/trainer_baselineは渡さない。
+// 過去走は当初premium=5走/standard=3走に分けていたが、Sonnetでは過去走2走増(≒入力+4千トークン、
+// 出力は不変)のコスト増がほぼ無視できる一方で情報量が増えるため、standardも5走に統一した
+// (2026-08-08、ユーザー判断)。
+const STANDARD_PAST_PERFORMANCE_LIMIT = 5;
 
 function serializeStandardEntry(input: EntryDiagnosisInput) {
   return {
