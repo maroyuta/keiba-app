@@ -43,23 +43,33 @@ async function ensureRace(
 ): Promise<{ id: string; created: boolean }> {
   const { data: existing, error: selectError } = await supabase
     .from("races")
-    .select("id, entry_count")
+    .select("id, entry_count, post_time")
     .eq("jv_race_key", raceId)
     .maybeSingle();
   if (selectError) {
     throw new Error(`races検索に失敗: ${selectError.message}`);
   }
   if (existing) {
-    // entry_countは出走取消・除外で開催が近づくほど減っていくため、race行自体は
-    // insert-onlyでもentry_countだけは最新のnetkeiba値へ都度更新する(古い登録頭数の
-    // まま取り残されると「実際より多い頭数」がUIに残り続けるバグになるため)。
+    // race行自体はinsert-onlyだが、entry_countとpost_timeだけは既存行にも都度反映する。
+    // - entry_count: 出走取消・除外で開催が近づくほど減るため、古い登録頭数が残ると
+    //   「実際より多い頭数」がUIに残り続けるバグになる。
+    // - post_time: 発走時刻が無いとrun_odds_watch.pyがそのレースをスキップし、
+    //   オッズが一切取れなくなる(2026-08-08、既存race行にpost_timeが入らず全レースの
+    //   オッズ取得が漏れていた不具合)。netkeibaの出馬表に発走時刻がある限り補完する。
+    const updates: Partial<Database["public"]["Tables"]["races"]["Update"]> = {};
     if (meta.entryCount !== null && meta.entryCount !== existing.entry_count) {
+      updates.entry_count = meta.entryCount;
+    }
+    if (meta.postTime && meta.postTime !== existing.post_time) {
+      updates.post_time = meta.postTime;
+    }
+    if (Object.keys(updates).length > 0) {
       const { error: updateError } = await supabase
         .from("races")
-        .update({ entry_count: meta.entryCount })
+        .update(updates)
         .eq("id", existing.id);
       if (updateError) {
-        throw new Error(`races.entry_count更新に失敗: ${updateError.message}`);
+        throw new Error(`races更新に失敗: ${updateError.message}`);
       }
     }
     return { id: existing.id, created: false };
