@@ -575,6 +575,18 @@ async function loadRaceDiagnosisInput(
 
   const biasReferences = await findBiasReferenceRaces(supabase, race);
 
+  // コース(会場×芝ダ×距離)の同時期・多年トラックバイアスプロファイル(course_bias_profiles、
+  // 2026-08-08追加)。findBiasReferenceRaces(直近1-2レースの実況)より参照が広く構造的で、
+  // 「多年で一貫する脚質バイアス」を確信度付きで持つ。バイアスは会場ではなくコース単位で、
+  // 枠の向きは距離で逆転する(新潟芝1000=外/芝1800=内等)ため、track_type×distance_mまで一致させる。
+  const { data: courseBiasProfile } = await supabase
+    .from("course_bias_profiles")
+    .select("*")
+    .eq("keibajo_code", race.keibajo_code)
+    .eq("track_type", race.track_type)
+    .eq("distance_m", race.distance_m)
+    .maybeSingle();
+
   // ワイド・馬連の現在オッズ(組み合わせ単位、JV-Link JVRTOpen "0B30"由来、2026-07-31追加)。
   // 発売開始前や取得タイミング次第では0件のこともあり、その場合はプロンプト側で単勝オッズ
   // からの概算にフォールバックする。
@@ -608,6 +620,7 @@ async function loadRaceDiagnosisInput(
         criteria: rc.prediction_criteria,
       })),
       biasReferenceRaces: biasReferences.map((r) => r.reference),
+      courseBiasProfile: courseBiasProfile ?? null,
       oddsCombinations: oddsCombinations ?? [],
     },
     // DBのbias_reference_race_id(単一FK)には、参照した中で最初の1件(日曜なら今週土曜、

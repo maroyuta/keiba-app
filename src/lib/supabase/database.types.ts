@@ -69,6 +69,69 @@ export type Database = {
           },
         ]
       }
+      course_bias_profiles: {
+        Row: {
+          back_pct: number | null
+          computed_at: string
+          distance_m: number
+          front_pct: number | null
+          inner_pct: number | null
+          keibajo_code: string
+          outer_pct: number | null
+          runs: number
+          style_confidence: string | null
+          style_gap: number | null
+          style_label: string | null
+          summary_note: string | null
+          track_type: string
+          waku_confidence: string | null
+          waku_gap: number | null
+          waku_label: string | null
+          window_days: number | null
+          years_covered: number
+        }
+        Insert: {
+          back_pct?: number | null
+          computed_at?: string
+          distance_m: number
+          front_pct?: number | null
+          inner_pct?: number | null
+          keibajo_code: string
+          outer_pct?: number | null
+          runs: number
+          style_confidence?: string | null
+          style_gap?: number | null
+          style_label?: string | null
+          summary_note?: string | null
+          track_type: string
+          waku_confidence?: string | null
+          waku_gap?: number | null
+          waku_label?: string | null
+          window_days?: number | null
+          years_covered: number
+        }
+        Update: {
+          back_pct?: number | null
+          computed_at?: string
+          distance_m?: number
+          front_pct?: number | null
+          inner_pct?: number | null
+          keibajo_code?: string
+          outer_pct?: number | null
+          runs?: number
+          style_confidence?: string | null
+          style_gap?: number | null
+          style_label?: string | null
+          summary_note?: string | null
+          track_type?: string
+          waku_confidence?: string | null
+          waku_gap?: number | null
+          waku_label?: string | null
+          window_days?: number | null
+          years_covered?: number
+        }
+        Relationships: []
+      }
       horse_pedigrees: {
         Row: {
           created_at: string

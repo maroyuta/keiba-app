@@ -35,6 +35,23 @@ export interface BiasReferenceRace {
   biasNote: string | null;
 }
 
+// コース(会場×芝ダ×距離)の同時期・多年トラックバイアスプロファイル(course_bias_profiles、
+// compute_course_bias.py が週次算出)。findBiasReferenceRaces(直近1-2レースの実況)より広く構造的で、
+// 脚質(前/後)・枠(内/外)のバイアスと、それが複数年で一貫しているかの確信度(高/中/低)を持つ。
+export interface CourseBiasProfile {
+  runs: number;
+  years_covered: number;
+  front_pct: number | null;
+  back_pct: number | null;
+  style_label: string | null;      // 前有利 / 後方有利 / フラット
+  style_confidence: string | null; // 高 / 中 / 低
+  inner_pct: number | null;
+  outer_pct: number | null;
+  waku_label: string | null;       // 内枠有利 / 外枠有利 / フラット
+  waku_confidence: string | null;
+  summary_note: string | null;
+}
+
 export interface RaceDiagnosisInput {
   race: RaceRow;
   entries: EntryDiagnosisInput[];
@@ -43,6 +60,9 @@ export interface RaceDiagnosisInput {
   // ユーザー指摘によりSundayは土曜だけでなく先週分も参照するよう拡張)。実データがまだ蓄積されていない
   // (開催初週・運用開始直後等) 場合は空配列
   biasReferenceRaces: BiasReferenceRace[];
+  // このレースのコース(会場×芝ダ×距離)の同時期・多年バイアスプロファイル(2026-08-08追加)。
+  // サンプル不足のコースやデータ未整備の場合は null。biasReferenceRaces(直近の実況)と補完的に使う。
+  courseBiasProfile: CourseBiasProfile | null;
   // ワイド・馬連の現在オッズ(組み合わせ単位、JV-Link JVRTOpen "0B30"由来、2026-07-31追加)。
   // 発売開始前や取得タイミングによっては空配列になりうる(その場合は単勝オッズからの概算に
   // フォールバックするようプロンプト側で指示している)。
@@ -215,7 +235,25 @@ predicted_biasと噛み合わない(不利側の脚質・枠になる)なら、�
 ## バイアス予測のルール
 
 トラックバイアスはその時の馬場状態に左右されるため、当日の実況ではなく直近の実データから推測する。
-- 入力データのbias_reference_races(配列)を主根拠にする。**日曜のレースは今週の土曜と先週の同場、
+
+- **★まず course_bias_profile(このコース=会場×芝ダ×距離の「同時期・多年」バイアスプロファイル)を
+  構造の土台にすること(2026-08-08新設)。** これは直近数年の同会場・同芝ダ・同距離・同時期の実データを
+  集計したもので、bias_reference_races(直近1-2レースの単発の実況)より母数が大きく信頼できる。使い方:
+  - **style_confidence が「高」の脚質バイアス(例: 前有利)は、複数年で一貫して確認された構造的な事実として
+    強く扱うこと。** これは「歩くエレベーターに乗れるか」に相当し、絶対能力に次ぐ重みを持つ級のシグナル。
+    high信頼の「前有利」なら、逃げ・先行で楽に好位を取れる馬を明確に上位評価し、外を回す差し・追込は
+    (絶対能力がよほど抜けていない限り)割り引く。**特に本命(軸)は、high信頼のバイアスに逆行する脚質の馬を
+    避け、そのバイアスに乗れる脚質・枠の馬を優先すること**(軸こそエレベーターに乗る馬にする)。
+  - **枠(waku)のバイアスは距離・コースで向きが逆転する(例: 新潟芝1000=外枠有利だが芝1800=内枠有利)。**
+    course_bias_profile の waku_label/waku_confidence をそのコース固有の値として使い、他コースの枠感覚を
+    持ち込まないこと。waku_confidence が「低」やフラットなら枠は軽い材料に留める。
+  - style/waku とも confidence が「中」なら傾向として参考にする程度、「低」やプロファイル自体が null
+    (サンプル不足コース)なら決め打ちせず、下の bias_reference_races と一般論で補う。
+  - **course_bias_profile(構造・多年) と bias_reference_races(直近の馬場状態) が食い違う場合の解釈:**
+    構造は「その時期のそのコースの標準的な癖」、直近実況は「今の馬場が乾いた/荒れた等の一時的なズレ」。
+    両者を併記し、直近で明確な変化(急な内伸び/外伸び等)があればそちらを優先しつつ、無ければ多年の構造を
+    既定値にする。predicted_bias にはこの2層(構造＋直近)を踏まえた結論を書くこと。
+- 入力データのbias_reference_races(配列)を直近の馬場状態の根拠にする。**日曜のレースは今週の土曜と先週の同場、
   2件分の実績を両方確認し、直近の傾向が続いているか・変化しているかを踏まえて予測すること**
   (馬場が回復/悪化した等、条件の変化があれば言及する)
   - 土曜のレース: bias_reference_races[0]は直近の同場開催 (基本的に先週の同場、開催初週なら前年以前の同時期開催) の実績
@@ -1045,6 +1083,25 @@ function serializeEntry(input: EntryDiagnosisInput) {
   };
 }
 
+// コース(会場×芝ダ×距離)の同時期・多年バイアスプロファイルを診断ペイロードへ整形する。
+// null(サンプル不足コース・未整備)ならそのままnullを渡し、プロンプト側で「無ければ直近実況で補う」。
+function serializeCourseBiasProfile(p: CourseBiasProfile | null) {
+  if (!p) return null;
+  return {
+    summary: p.summary_note,
+    style_label: p.style_label,             // 前有利 / 後方有利 / フラット
+    style_confidence: p.style_confidence,   // 高 / 中 / 低(多年一貫性×サンプル数)
+    waku_label: p.waku_label,               // 内枠有利 / 外枠有利 / フラット
+    waku_confidence: p.waku_confidence,
+    front_pct: p.front_pct,                 // 先行勢の平均着順%(低いほど好走)
+    back_pct: p.back_pct,                   // 差し・追込勢の平均着順%
+    inner_pct: p.inner_pct,
+    outer_pct: p.outer_pct,
+    years_covered: p.years_covered,         // 集計に含めた年数(多年一貫性の母数)
+    runs: p.runs,
+  };
+}
+
 export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
   const payload = {
     race: serializeRace(input.race),
@@ -1053,6 +1110,7 @@ export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
       track_condition: r.trackCondition,
       bias_note: r.biasNote,
     })),
+    course_bias_profile: serializeCourseBiasProfile(input.courseBiasProfile),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
     entries: input.entries.map(serializeEntry),
     odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
@@ -1121,6 +1179,7 @@ export function buildStandardPayload(input: RaceDiagnosisInput): string {
       track_condition: r.trackCondition,
       bias_note: r.biasNote,
     })),
+    course_bias_profile: serializeCourseBiasProfile(input.courseBiasProfile),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
     entries: input.entries.map(serializeStandardEntry),
     odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
