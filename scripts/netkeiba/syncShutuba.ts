@@ -43,7 +43,7 @@ async function ensureRace(
 ): Promise<{ id: string; created: boolean }> {
   const { data: existing, error: selectError } = await supabase
     .from("races")
-    .select("id, entry_count, post_time")
+    .select("id, entry_count, post_time, race_class")
     .eq("jv_race_key", raceId)
     .maybeSingle();
   if (selectError) {
@@ -62,6 +62,13 @@ async function ensureRace(
     }
     if (meta.postTime && meta.postTime !== existing.post_time) {
       updates.post_time = meta.postTime;
+    }
+    // race_classは新馬/未勝利/1勝クラス等の除外判定に使うが、クラスがnetkeibaページに載る前に
+    // 作られた行はnullのまま残る(races本体はinsert-onlyのため)。既存がnullの時だけ、パースで
+    // 得たクラスで埋める(他の値は上書きしない設計は尊重)。2026-08-09、当日race_class=nullで
+    // 1勝クラス/新馬/未勝利の除外が効かず無駄診断していた事故対応。
+    if (!existing.race_class && meta.raceClass) {
+      updates.race_class = meta.raceClass;
     }
     if (Object.keys(updates).length > 0) {
       const { error: updateError } = await supabase
