@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { screenRace, diagnoseRaceStandard, diagnoseRacePremium } from "@/lib/claude/predict";
+import { screenRace, diagnoseRaceStandard, diagnoseRacePremium, DiagnosisParseError } from "@/lib/claude/predict";
 import type { UsageInfo } from "@/lib/claude/predict";
 import type { RaceDiagnosisInput, DiagnosisResult, BiasReferenceRace } from "@/lib/claude/prompts";
 import type { RaceRow, UsageLogTier } from "@/lib/supabase/database.types";
@@ -779,6 +779,61 @@ export async function POST(
   }
   const { input, biasReferenceRaceId } = loaded;
 
+  // 二重課金の構造的防止(2026-08-09、二重実行事故を受けて追加。金曜→土曜のまたぎ重複も潰すため
+  // 「当日」ではなく「そのレースが過去に一度でも成功診断済みか」で判定する)。
+  // race_idは特定日の1レースを一意に指すので、同じrace_idを再診断する理由は
+  //   (a) 失敗のリトライ(standard/premiumのlogが無い=ここは通す) か
+  //   (b) オッズ更新後の意図的な再診断(?force=1 を明示) のどちらかしかない。
+  // したがって: standard/premiumのusageログが既にあるレースは、force=1 が無ければ課金せずskip。
+  // バッチ・アプリのボタン・手動スクリプトのどの経路から何回叩かれても、race当たり1回に収斂する。
+  // 例外: ?tier=premium の「本気診断」は、standardのみ済みのレースへの意図的エスカレーションなので、
+  //       premiumログがまだ無ければ通す(standardログの存在ではブロックしない)。
+  const forceRediagnose = new URL(request.url).searchParams.get("force") === "1";
+  if (!forceRediagnose) {
+    const { data: priorRows } = await supabase
+      .from("api_usage_log")
+      .select("tier")
+      .eq("race_id", raceId)
+      .in("tier", ["standard", "premium"]);
+    const hasStandard = (priorRows ?? []).some((r) => r.tier === "standard");
+    const hasPremium = (priorRows ?? []).some((r) => r.tier === "premium");
+    const alreadyDone = wantsPremium ? hasPremium : hasStandard || hasPremium;
+    if (alreadyDone) {
+      return NextResponse.json({
+        tier: "skipped",
+        already_diagnosed: true,
+        reason: `このレースは既に${hasPremium ? "premium" : "standard"}で診断済みのため課金せずスキップ(再診断は ?force=1)`,
+      });
+    }
+  }
+
+  // 日次予算ハードキャップ(2026-08-09追加)。予算は月¥4,000/週¥1,000=クリーンな1日¥400-650。
+  // その日(JST)の診断コスト累計が上限に達したら、以降の課金診断を止める。二重実行ガードを
+  // すり抜ける想定外の暴走(force=1連打・失敗リトライループ・想定外の大量レース)への最終防波堤。
+  // 上限は環境変数 DIAGNOSIS_DAILY_BUDGET_JPY で調整可(既定¥1,000)。force=1 でも例外にしない。
+  {
+    const dailyBudgetJpy = Number(process.env.DIAGNOSIS_DAILY_BUDGET_JPY ?? "1000");
+    const jstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const jstDayStartUtc = new Date(
+      Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate()) - 9 * 3600 * 1000,
+    );
+    const { data: todayRows } = await supabase
+      .from("api_usage_log")
+      .select("estimated_cost_usd")
+      .gte("created_at", jstDayStartUtc.toISOString());
+    const spentJpy = (todayRows ?? []).reduce(
+      (sum, r) => sum + Number(r.estimated_cost_usd ?? 0) * 150,
+      0,
+    );
+    if (spentJpy >= dailyBudgetJpy) {
+      return NextResponse.json({
+        tier: "skipped",
+        budget_exceeded: true,
+        reason: `本日の診断コスト累計¥${Math.round(spentJpy)}が上限¥${dailyBudgetJpy}に達したため停止(上限変更は DIAGNOSIS_DAILY_BUDGET_JPY)`,
+      });
+    }
+  }
+
   // 「本気診断」ボタン: standardでA/S評価が出たレースのみ、手動でOpusへ深掘りさせる
   // (2026-07-13、S限定からA以上に緩和。standardは血統/調教を見ない軽量tierになったため、
   // 実際の深掘り調査はA以上のレース全てでpremiumに任せる二段階構成にした)。
@@ -801,10 +856,21 @@ export async function POST(
         { status: 400 },
       );
     }
-    const premium = await diagnoseRacePremium(input);
-    await logUsage(supabase, raceId, "premium", premium.usage);
-    await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId, "premium");
-    return NextResponse.json({ tier: "premium", result: premium.result });
+    try {
+      const premium = await diagnoseRacePremium(input);
+      await logUsage(supabase, raceId, "premium", premium.usage);
+      await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId, "premium");
+      return NextResponse.json({ tier: "premium", result: premium.result });
+    } catch (err) {
+      if (err instanceof DiagnosisParseError) {
+        await logUsage(supabase, raceId, "premium", err.usage); // 失敗回も課金は発生=必ず記録
+        return NextResponse.json(
+          { tier: "error", parse_failed: true, reason: "premium診断のJSONパース失敗(コストは記録済み)" },
+          { status: 502 },
+        );
+      }
+      throw err;
+    }
   }
 
   // 障害レース・新馬戦・未勝利戦はコスト対象外 (screeningのHaiku呼び出しすら行わない)。
@@ -868,16 +934,37 @@ export async function POST(
   // Vercel経由ではeffort=high(300秒上限内)、ローカルのnpm run diagnose:premium経由ではxhigh全力になる
   // (predict.tsのpremiumEffort()参照)。平場のS/A評価は従来通り「本気診断」ボタンの手動実行に委ねる。
   if (isGraded) {
-    const premium = await diagnoseRacePremium(input);
-    await logUsage(supabase, raceId, "premium", premium.usage);
-    await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId, "premium");
-    return NextResponse.json({ tier: "premium", result: premium.result });
+    try {
+      const premium = await diagnoseRacePremium(input);
+      await logUsage(supabase, raceId, "premium", premium.usage);
+      await persistDiagnosis(supabase, raceId, input, premium.result, biasReferenceRaceId, "premium");
+      return NextResponse.json({ tier: "premium", result: premium.result });
+    } catch (err) {
+      if (err instanceof DiagnosisParseError) {
+        await logUsage(supabase, raceId, "premium", err.usage); // 失敗回も課金は発生=必ず記録
+        return NextResponse.json(
+          { tier: "error", parse_failed: true, reason: "premium診断のJSONパース失敗(コストは記録済み)" },
+          { status: 502 },
+        );
+      }
+      throw err;
+    }
   }
 
   // 標準診断 (Sonnet)。S評価が出ても自動ではOpusへ進まず、「本気診断」ボタンの手動実行に委ねる。
-  const diagnosis = await diagnoseRaceStandard(input);
-  await logUsage(supabase, raceId, "standard", diagnosis.usage);
-  await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId, "standard");
-
-  return NextResponse.json({ tier: "standard", result: diagnosis.result });
+  try {
+    const diagnosis = await diagnoseRaceStandard(input);
+    await logUsage(supabase, raceId, "standard", diagnosis.usage);
+    await persistDiagnosis(supabase, raceId, input, diagnosis.result, biasReferenceRaceId, "standard");
+    return NextResponse.json({ tier: "standard", result: diagnosis.result });
+  } catch (err) {
+    if (err instanceof DiagnosisParseError) {
+      await logUsage(supabase, raceId, "standard", err.usage); // 失敗回も課金は発生=必ず記録
+      return NextResponse.json(
+        { tier: "error", parse_failed: true, reason: "standard診断のJSONパース失敗(コストは記録済み)" },
+        { status: 502 },
+      );
+    }
+    throw err;
+  }
 }

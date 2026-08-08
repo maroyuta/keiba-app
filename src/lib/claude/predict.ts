@@ -106,6 +106,19 @@ export async function screenRace(
   throw lastError;
 }
 
+// 診断レスポンスのJSONパースに失敗した時に投げるエラー。⚠️重要: standard/premiumは
+// stream完走後にparseするため、parseが落ちても「Anthropicへのトークン課金は既に発生している」。
+// このエラーにusageを載せて呼び出し側(route)へ渡し、失敗回もapi_usage_logに必ず記録させる
+// (2026-08-09、中京5Rの失敗が課金されているのにログに残らず"見えない課金"になっていた事故対応)。
+export class DiagnosisParseError extends Error {
+  usage: UsageInfo;
+  constructor(cause: unknown, usage: UsageInfo) {
+    super(`診断レスポンスのJSONパースに失敗: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "DiagnosisParseError";
+    this.usage = usage;
+  }
+}
+
 // 標準診断表生成 (Sonnet 5): 通常レースの診断表 (枠・馬番・ランク・全体分析など)。
 export async function diagnoseRaceStandard(
   input: RaceDiagnosisInput,
@@ -129,10 +142,12 @@ export async function diagnoseRaceStandard(
     messages: [{ role: "user", content: buildStandardPayload(input) }],
   });
   const message = await stream.finalMessage();
-  return {
-    result: parseJsonResponse<DiagnosisResult>(extractText(message)),
-    usage: buildUsageInfo(CLAUDE_MODELS.standard, message.usage),
-  };
+  const usage = buildUsageInfo(CLAUDE_MODELS.standard, message.usage);
+  try {
+    return { result: parseJsonResponse<DiagnosisResult>(extractText(message)), usage };
+  } catch (err) {
+    throw new DiagnosisParseError(err, usage);
+  }
 }
 
 // 重要レース診断 (Opus 4.8): race_rankがA/Sだったレースのみ、血統・調教まで含めたフル診断。
@@ -165,8 +180,10 @@ export async function diagnoseRacePremium(
     messages: [{ role: "user", content: buildRaceDataPayload(input) }],
   });
   const message = await stream.finalMessage();
-  return {
-    result: parseJsonResponse<DiagnosisResult>(extractText(message)),
-    usage: buildUsageInfo(CLAUDE_MODELS.premium, message.usage),
-  };
+  const usage = buildUsageInfo(CLAUDE_MODELS.premium, message.usage);
+  try {
+    return { result: parseJsonResponse<DiagnosisResult>(extractText(message)), usage };
+  } catch (err) {
+    throw new DiagnosisParseError(err, usage);
+  }
 }
