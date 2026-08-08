@@ -122,6 +122,10 @@ const PHILOSOPHY_RULES = `## 0. 大前提: このルールセットの使い方�
   感覚的な部分の判断余地は、あなた自身の総合判断に委ねてよい
 - ルールを満たすかどうかのチェック作業に矮小化せず、あくまでこのレースをどう読むかという総合判断の
   一部としてルールを使うこと
+- **★ルールの適用は「見境なく全部を毎回当てはめる」のではなく、今回のレースに実際に該当する時だけ使うこと(2026-08-09、ユーザー指摘)。** 明確な区別:
+  - **ハード禁止(=必ず守る少数)**: 文中で「禁止」「〜しない」「消し」等と明示された、能力・適性が明らかに不足する馬を軸/相手にしない類の最低限の歯止め。これは守る。
+  - **ソフトな傾向・「できれば避けたい」類(=判断材料の一つ)**: 「〜しがち」「〜に注意」「一段下げてよい」等の傾向記述や、特定開催・特定週の実測メモ。これらは**今回のコース・馬場・出走馬・course_bias_profile・オッズに実際に合致する場合のみ**適用し、合致しない条件のレースに機械的に持ち込まないこと。特定の場・距離・週に紐づく実測メモ(例: 新潟ダートの某週の内外傾向)は、今回がその条件でなければ使わない。
+  - **迷ったら、抽象的なルール文より、今回のレースの実データ(course_bias_profile・bias_reference_races・過去走・オッズ)を優先する。** ルールが今回のレースに当てはまらない・根拠が薄いと判断したら、無理に当てはめず「今回は該当せず」として素通りしてよい。関係ないルールを理由に無理な減点・除外・選外をしないこと。
 - 的中率100%を目指す設計ではなく、長期の期待値・回収率で勝つための思考プロセスを積み上げることが目的`;
 
 const CORE_RULES = `あなたは競馬予想の専門家として、渡されたレースデータから診断表を作成する。
@@ -353,6 +357,11 @@ predicted_biasと噛み合わない(不利側の脚質・枠になる)なら、�
 - odds_combinationsが空、または本命/相手の組み合わせが含まれていない場合に限り、単勝オッズからの概算に留め、analysis_valueに「組み合わせオッズは未取得のため単勝オッズからの概算」である旨を明記すること
 - analysis_valueには「過小評価されている」で終わらせず、市場想定勝率と実力の差(odds_combinationsがあればその実際の組み合わせオッズとの比較)という上記の妙味の考え方に基づいた具体的な根拠を書くこと
 - **odds_combinationsの実データを見た結果、単勝オッズからの概算では妙味がありそうに見えた組み合わせが、実際の組み合わせオッズ・人気順では妙味が無い(市場が既に適正に評価している)と判明した場合は、無理にその組み合わせで押し通さないこと。** 他に妙味のある相手候補が無いか再検討し、それでも見当たらなければhonmei_horse_number以外(aite_horse_number/bet_type/bet_amount_wide/bet_amount_umaren)をnullにして見送り扱いとし、race_rank_reasonに「組み合わせオッズ確認の結果、妙味のある相手が見当たらないため見送り」である旨を明記すること(重賞は上記「重賞は問答無用で購入する」ルールが優先される)
+
+### ★市場人気の扱い(2026-08-09、ユーザー要望)
+
+- **各馬に「expected_popularity」(単勝由来の確定人気)が入っていればそれを市場序列の正とする。** 無い(null)場合は、代わりに「estimated_popularity_from_combos」(ワイド/馬連の組合せオッズから機械算出した推定人気順位、1=最も人気)を市場序列として使ってよい。ユーザー実感として本命は結局1〜2番人気に落ち着くことが多く、市場が織り込んだ人気は本命選定・妙味判定の土台なので、単勝が未取得の時間帯でもこの推定人気で市場文脈を必ず補うこと。
+- **★市場データが全く無い時は本命・買い目を確定しないこと(最重要・見送りガード)。** 「expected_popularity」・「odds_win」・「estimated_popularity_from_combos」が出走馬の大半でnull(=単勝も組合せオッズもまだ発売前で未取得)の場合、市場評価という最優先の土台が無いまま軸を選ぶことになり、実際にこれで大きく外している(2026-08-09の実績)。この場合は **honmei/aite/bet_type/bet_amount_* を全てnullにし、race_rank を C 相当まで下げ、race_rank_reason に「オッズ未取得のため市場評価不能、確定はオッズ発売後」と明記して見送りにすること。** 能力・バイアス等の分析文(analysis_*)は通常どおり書いてよいが、買い目は出さない。単勝も組合せも一部でも取れていれば推定人気で通常判断してよい。
 
 ## 軸(本命)とS評価(妙味候補)の役割分担 ★重要
 
@@ -1057,7 +1066,48 @@ function serializeCriteriaScore(
   };
 }
 
-function serializeEntry(input: EntryDiagnosisInput) {
+// ★オッズ組合せ(ワイド/馬連)から各馬の推定人気を機械算出する(2026-08-09、ユーザー要望)。
+// 単勝オッズ(odds_win/expected_popularity)がまだ同期されていない時間帯でも、ワイド/馬連の
+// 組合せオッズが取れていれば市場の人気序列を復元して本命選定・妙味判定に使えるようにする。
+// 手法: 各馬について、その馬を含む組合せの「implied probability≒1/オッズ」を合計し(強い馬ほど
+// 相方を問わず低オッズの組合せに多く登場するため合計が大きくなる)、合計の降順で1番人気…と順位付けする。
+// 馬連(odds)を優先し、無ければワイド(odds_low=下限)を使う。組合せが1件も無ければ空Map(=推定不能)。
+export function estimatePopularityFromCombos(
+  entries: EntryDiagnosisInput[],
+  oddsCombinations: RaceOddsCombinationRow[],
+): Map<number, number> {
+  const strength = new Map<number, number>();
+  const bump = (horseNum: number, impliedProb: number) => {
+    strength.set(horseNum, (strength.get(horseNum) ?? 0) + impliedProb);
+  };
+  const umaren = oddsCombinations.filter((c) => c.bet_type === "umaren");
+  const wide = oddsCombinations.filter((c) => c.bet_type === "wide");
+  const source = umaren.length > 0 ? umaren : wide; // 馬連優先、無ければワイド
+  for (const c of source) {
+    const nums = (c.combination ?? "")
+      .split(/[-–]/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const odds = c.odds ?? c.odds_low; // 馬連はodds、ワイドはodds_low(下限)
+    if (nums.length < 2 || !odds || odds <= 0) continue;
+    const impliedProb = 1 / odds;
+    for (const n of nums) bump(n, impliedProb);
+  }
+  if (strength.size === 0) return new Map();
+  // 合計implied probの降順で人気順位(1=最も人気)を割り当てる。
+  const ranked = [...strength.entries()].sort((a, b) => b[1] - a[1]);
+  const rankByHorse = new Map<number, number>();
+  ranked.forEach(([horseNum], i) => rankByHorse.set(horseNum, i + 1));
+  // entriesに存在する馬番のみ返す(組合せに登場しない馬はnull=推定対象外)。
+  const validHorseNums = new Set(entries.map((e) => e.entry.horse_number));
+  const out = new Map<number, number>();
+  for (const [horseNum, rank] of rankByHorse) {
+    if (validHorseNums.has(horseNum)) out.set(horseNum, rank);
+  }
+  return out;
+}
+
+function serializeEntry(input: EntryDiagnosisInput, estimatedPopularityFromCombos: number | null = null) {
   return {
     post_position: input.entry.post_position,
     horse_number: input.entry.horse_number,
@@ -1070,6 +1120,9 @@ function serializeEntry(input: EntryDiagnosisInput) {
     equipment_note: input.entry.equipment_note,
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
+    // 単勝オッズ未取得時のフォールバック市場人気(ワイド/馬連の組合せオッズから機械算出、2026-08-09)。
+    // expected_popularityがある時はそちらが正、無い時のみこの推定値を市場序列として使う。
+    estimated_popularity_from_combos: estimatedPopularityFromCombos,
     heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
     past_performance_count: input.pastPerformances.length, // ★過去走の総件数。0〜1なら「データ不足・評価不能」を短評冒頭に明記すること(空配列の見落とし防止、2026-08-08)
     past_performances: input.pastPerformances.map(serializePastPerformance),
@@ -1112,7 +1165,10 @@ export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
     })),
     course_bias_profile: serializeCourseBiasProfile(input.courseBiasProfile),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
-    entries: input.entries.map(serializeEntry),
+    entries: (() => {
+      const estMap = estimatePopularityFromCombos(input.entries, input.oddsCombinations);
+      return input.entries.map((e) => serializeEntry(e, estMap.get(e.entry.horse_number) ?? null));
+    })(),
     odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
   };
   return JSON.stringify(payload);
@@ -1149,7 +1205,7 @@ export function buildScreeningPayload(input: RaceDiagnosisInput): string {
 // (2026-08-08、ユーザー判断)。
 const STANDARD_PAST_PERFORMANCE_LIMIT = 5;
 
-function serializeStandardEntry(input: EntryDiagnosisInput) {
+function serializeStandardEntry(input: EntryDiagnosisInput, estimatedPopularityFromCombos: number | null = null) {
   return {
     post_position: input.entry.post_position,
     horse_number: input.entry.horse_number,
@@ -1162,6 +1218,8 @@ function serializeStandardEntry(input: EntryDiagnosisInput) {
     equipment_note: input.entry.equipment_note,
     odds_win: input.entry.odds_win,
     expected_popularity: input.entry.expected_popularity,
+    // 単勝オッズ未取得時のフォールバック市場人気(ワイド/馬連組合せから機械算出、2026-08-09)。
+    estimated_popularity_from_combos: estimatedPopularityFromCombos,
     heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
     past_performance_count: input.pastPerformances.length, // ★過去走の総件数。0〜1なら「データ不足・評価不能」を短評冒頭に明記すること(空配列の見落とし防止、2026-08-08)
     past_performances: input.pastPerformances
@@ -1181,7 +1239,10 @@ export function buildStandardPayload(input: RaceDiagnosisInput): string {
     })),
     course_bias_profile: serializeCourseBiasProfile(input.courseBiasProfile),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
-    entries: input.entries.map(serializeStandardEntry),
+    entries: (() => {
+      const estMap = estimatePopularityFromCombos(input.entries, input.oddsCombinations);
+      return input.entries.map((e) => serializeStandardEntry(e, estMap.get(e.entry.horse_number) ?? null));
+    })(),
     odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
   };
   return JSON.stringify(payload);

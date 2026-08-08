@@ -119,7 +119,13 @@ export async function diagnoseRaceStandard(
     max_tokens: 24000,
     thinking: { type: "adaptive" },
     output_config: { effort: "high" },
-    system: STANDARD_SYSTEM_PROMPT,
+    // プロンプトキャッシュ(2026-08-09): 巨大な共通ルール(STANDARD_SYSTEM_PROMPT)はレースをまたいで
+    // 1バイトも変わらないため cache_control を付け、同一バッチ(diagnoseUpcoming等)の2レース目以降は
+    // この前半を約1/10のコストで読み出す。レース固有データはuser messageに置いてあり前半に混ざらない
+    // ため、キャッシュ(前方一致)は安全に効く。TTLはephemeral(5分)で、キャッシュヒットのたびに延長される
+    // ため連続診断のバッチ内は温まったまま維持される。単発診断1回だけの時は書き込み1.25倍で微増だが、
+    // 実運用のバッチではinput課金の共通部分が大幅に減る。
+    system: [{ type: "text", text: STANDARD_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: buildStandardPayload(input) }],
   });
   const message = await stream.finalMessage();
@@ -154,7 +160,8 @@ export async function diagnoseRacePremium(
     max_tokens: 32000,
     thinking: { type: "adaptive" },
     output_config: { effort: premiumEffort() },
-    system: PREMIUM_SYSTEM_PROMPT,
+    // プロンプトキャッシュ(2026-08-09、standardと同趣旨)。本気診断も共通ルールは固定なのでキャッシュする。
+    system: [{ type: "text", text: PREMIUM_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: buildRaceDataPayload(input) }],
   });
   const message = await stream.finalMessage();
