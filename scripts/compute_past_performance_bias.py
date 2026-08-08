@@ -178,6 +178,49 @@ def is_front_runner(corner_positions: "str | None", entry_count: "int | None") -
     return ratio <= 0.35
 
 
+# 上がり3Fと着順から「差しが決まる馬場だったか」を判定する最小サンプル数
+AGARI_MIN_SAMPLE = 5
+
+
+def describe_agari_effect(rows: list) -> "str | None":
+    """上がり3F最速級の馬が実際に上位に来たか(=差しが決まる馬場だったか)を判定する。
+    上がり(agari_3f_sec)・着順・頭数が揃う行がAGARI_MIN_SAMPLE以上あるときのみ。戻り値は短い説明文かNone。"""
+    ag = [
+        r for r in rows
+        if r.get("agari_3f_sec") and r.get("finish_position") and r["finish_position"] > 0
+        and r.get("entry_count") and r["entry_count"] > 0
+    ]
+    if len(ag) < AGARI_MIN_SAMPLE:
+        return None
+    by_agari = sorted(ag, key=lambda r: r["agari_3f_sec"])
+    fastest = by_agari[0]
+    reached = [r for r in by_agari[:2] if r["finish_position"] / r["entry_count"] <= 0.5]
+    if len(reached) == 0:
+        return f"上がり上位2頭とも凡走(最速{fastest['agari_3f_sec']}秒→{fastest['finish_position']}着)=差し届かず"
+    if len(reached) == 2:
+        return f"上がり上位馬が上位占め(最速{fastest['agari_3f_sec']}秒→{fastest['finish_position']}着)=差し優勢"
+    return None
+
+
+def pace_style_caveat(style_dir: int, pace_mark: "str | None") -> "str | None":
+    """netkeibaのpace_mark(H=ハイ/M=ミドル/S=スロー)で脚質バイアスの真偽を裏取りする。
+    style_dir: +1=前有利、-1=後方有利、0=フラット。前有利がスロー起因か、ハイでも残った本物かを区別する。"""
+    if not pace_mark or style_dir == 0:
+        return None
+    p = pace_mark.strip().upper()[:1]
+    if style_dir > 0:  # 前有利
+        if p == "S":
+            return "※この前有利はスローペース起因の可能性(馬場バイアスとして過信しない)"
+        if p == "H":
+            return "※ハイペースでも前が残った=馬場の前有利は本物寄り"
+    elif style_dir < 0:  # 後方有利
+        if p == "H":
+            return "※この差し有利はハイペース起因の可能性(馬場バイアスとして過信しない)"
+        if p == "S":
+            return "※スローでも差しが届いた=馬場の差し有利は本物寄り"
+    return None
+
+
 def fetch_target_rows(client: SupabaseClient, recompute_all: bool) -> list:
     params = {
         "post_position": "not.is.null",
@@ -186,7 +229,7 @@ def fetch_target_rows(client: SupabaseClient, recompute_all: bool) -> list:
         "race_date": "not.is.null",
         "keibajo_name": "not.is.null",
         "race_number": "not.is.null",
-        "select": "id,race_date,keibajo_name,race_number,post_position,finish_position,entry_count,corner_positions,pace_mark,bias_note",
+        "select": "id,race_date,keibajo_name,race_number,post_position,finish_position,entry_count,corner_positions,pace_mark,agari_3f_sec,bias_note",
     }
     if not recompute_all:
         params["bias_note"] = "is.null"
@@ -240,7 +283,12 @@ def build_group_bias(rows: list) -> "dict | None":
         style_label = f"{'前有利' if side == '内' else '後方有利' if side == '外' else '脚質フラット'}(先行勢の平均着順{front_pct}% vs 後方勢{back_pct}%)"
 
     pace_counter = Counter(r["pace_mark"] for r in rows if r.get("pace_mark"))
-    pace_part = f" [pace:{pace_counter.most_common(1)[0][0]}]" if pace_counter else ""
+    pace_majority = pace_counter.most_common(1)[0][0] if pace_counter else None
+    pace_part = f" [pace:{pace_majority}]" if pace_majority else ""
+
+    # ペース(pace_mark)で脚質バイアスの真偽を裏取り、上がり3Fで差しの通り具合を補足する(2026-08-08追加)。
+    style_caveat = pace_style_caveat(style_dir, pace_majority)
+    agari_part = describe_agari_effect(rows)
 
     return {
         "waku_label": waku_label,
@@ -248,6 +296,8 @@ def build_group_bias(rows: list) -> "dict | None":
         "style_label": style_label,
         "style_dir": style_dir,
         "pace_part": pace_part,
+        "style_caveat": style_caveat,
+        "agari_part": agari_part,
         "n": len(rows),
         "front_flag_by_id": front_flag_by_id,
     }
@@ -258,6 +308,10 @@ def build_row_note(group_bias: dict, row: dict) -> str:
         f"[実況] {group_bias['style_label']} / {group_bias['waku_label']} "
         f"{group_bias['n']}頭{group_bias['pace_part']}"
     )
+    if group_bias.get("style_caveat"):
+        race_summary += f" {group_bias['style_caveat']}"
+    if group_bias.get("agari_part"):
+        race_summary += f" [上がり:{group_bias['agari_part']}]"
 
     # この馬自身の枠・脚質が、有利側(+1)/不利側(-1)/バイアス自体フラット(0)のどれに乗るか
     horse_waku_dir = 1 if row["post_position"] <= 4 else -1

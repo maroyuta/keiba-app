@@ -165,10 +165,57 @@ def is_front_runner(corner_positions: "str | None", entry_count: "int | None") -
     return ratio <= 0.35
 
 
+# 実測ペースの前傾/後傾判定(2026-08-08追加)。JV-Link RA由来の前半3F(first_3f_sec)と
+# 後半3F(last_3f_sec)の差でペースを分類する。pace_diff = 前半 − 後半。
+#   pace_diff >= +PACE_DIFF_THRESHOLD (前半が後半より明確に遅い) → 後傾=スロー。前が楽に運べるため
+#     「前有利」が出やすいが、それは馬場ではなくペース起因の可能性が高い(=バイアスの過大評価に注意)。
+#   pace_diff <= -PACE_DIFF_THRESHOLD (前半が後半より明確に速い) → 前傾=ハイ。前がバテやすいため、
+#     この状況で前が残っていれば馬場の前有利は本物寄り、後方有利ならペース起因寄り。
+PACE_DIFF_THRESHOLD = 1.0  # 秒。前後半3F差がこれ以上で前傾/後傾と呼ぶ
+# 上がり3Fと着順から「差しが決まる馬場か」を判定する最小サンプル数
+AGARI_MIN_SAMPLE = 5
+
+
+def describe_pace(first_3f, last_3f) -> "tuple[str, float] | None":
+    """(label, pace_diff)を返す。判定材料が無ければNone。labelは'スロー(後傾)'/'ハイ(前傾)'/'平均'。"""
+    if first_3f is None or last_3f is None:
+        return None
+    try:
+        diff = round(float(first_3f) - float(last_3f), 1)
+    except (TypeError, ValueError):
+        return None
+    if diff >= PACE_DIFF_THRESHOLD:
+        return ("スロー(後傾)", diff)
+    if diff <= -PACE_DIFF_THRESHOLD:
+        return ("ハイ(前傾)", diff)
+    return ("平均", diff)
+
+
+def describe_agari_effect(pp_rows: list) -> "str | None":
+    """上がり3F最速級の馬が実際に上位に来たか(=差しが決まる馬場だったか)を判定する。
+    上がり(agari_3f_sec)・着順・頭数が揃う行がAGARI_MIN_SAMPLE以上あるときのみ。戻り値は短い説明文かNone。"""
+    rows = [
+        r for r in pp_rows
+        if r.get("agari_3f_sec") and r.get("finish_position") and r["finish_position"] > 0
+        and r.get("entry_count") and r["entry_count"] > 0
+    ]
+    if len(rows) < AGARI_MIN_SAMPLE:
+        return None
+    by_agari = sorted(rows, key=lambda r: r["agari_3f_sec"])
+    top = by_agari[:2]
+    fastest = by_agari[0]
+    reached = [r for r in top if r["finish_position"] / r["entry_count"] <= 0.5]
+    if len(reached) == 0:
+        return f"上がり上位2頭とも凡走(最速{fastest['agari_3f_sec']}秒→{fastest['finish_position']}着)=差し届かず"
+    if len(reached) == 2:
+        return f"上がり上位馬が上位占め(最速{fastest['agari_3f_sec']}秒→{fastest['finish_position']}着)=差し優勢"
+    return None
+
+
 def fetch_confirmed_races(client: SupabaseClient, recompute_all: bool) -> list:
     params = {
         "entry_count": "not.is.null",
-        "select": "id,race_date,keibajo_name,race_number,track_type,distance_m,entry_count,actual_bias_note",
+        "select": "id,race_date,keibajo_name,race_number,track_type,distance_m,entry_count,actual_bias_note,first_3f_sec,last_3f_sec",
         "order": "race_date.desc",
     }
     if not recompute_all:
@@ -205,7 +252,7 @@ def fetch_past_performances_by_race(client: SupabaseClient, race_ids: list) -> d
             "past_performances",
             {
                 "race_id": f"in.({','.join(chunk)})",
-                "select": "race_id,corner_positions,pace_mark,finish_position,entry_count",
+                "select": "race_id,corner_positions,pace_mark,finish_position,entry_count,agari_3f_sec",
             },
         )
         for row in rows:
@@ -253,29 +300,58 @@ def build_bias_note(race: dict, entries: list, pp_rows: list) -> "str | None":
         (front_ratios if front else back_ratios).append(r)
 
     style_part = None
+    style_kind = None
     if len(front_ratios) >= 2 and len(back_ratios) >= 2:
         front_pct = round(sum(front_ratios) / len(front_ratios) * 100)
         back_pct = round(sum(back_ratios) / len(back_ratios) * 100)
         diff = front_pct - back_pct
         if diff <= -BIAS_THRESHOLD_POINTS:
-            label = "前有利"
+            style_kind = "前有利"
         elif diff >= BIAS_THRESHOLD_POINTS:
-            label = "後方有利"
+            style_kind = "後方有利"
         else:
-            label = "脚質フラット"
-        style_part = f"{label}(先行勢の平均着順{front_pct}% vs 後方勢{back_pct}%)"
+            style_kind = "脚質フラット"
+        style_part = f"{style_kind}(先行勢の平均着順{front_pct}% vs 後方勢{back_pct}%)"
+
+    # 実測ペース(JV-Link RA由来)で脚質バイアスの真偽を裏取りする(2026-08-08追加)。
+    # 「前有利」がスローペース起因の見せかけか、ハイペース下でも前が残った本物かを区別する。
+    pace = describe_pace(race.get("first_3f_sec"), race.get("last_3f_sec"))
+    pace_real_part = None
+    style_caveat = None
+    if pace:
+        plabel, pdiff = pace
+        pace_real_part = f"[実測ペース:{plabel} 前半{race.get('first_3f_sec')}-後半{race.get('last_3f_sec')}(差{pdiff:+})]"
+        if style_kind == "前有利":
+            if plabel.startswith("スロー"):
+                style_caveat = "※この前有利はスローペース起因の可能性(馬場バイアスとして過信しない)"
+            elif plabel.startswith("ハイ"):
+                style_caveat = "※ハイペースでも前が残った=馬場の前有利は本物寄り"
+        elif style_kind == "後方有利":
+            if plabel.startswith("ハイ"):
+                style_caveat = "※この差し有利はハイペース起因の可能性(馬場バイアスとして過信しない)"
+            elif plabel.startswith("スロー"):
+                style_caveat = "※スローでも差しが届いた=馬場の差し有利は本物寄り"
+
+    # 上がり3F(past_performances、netkeiba由来で高カバレッジ)で差しが実際に決まったかを補足。
+    agari_part = describe_agari_effect(pp_rows)
 
     pace_counter = Counter(pp["pace_mark"] for pp in pp_rows if pp.get("pace_mark"))
-    pace_part = f"[pace:{pace_counter.most_common(1)[0][0]}]" if pace_counter else None
 
     if waku_part is None and style_part is None:
         return None
 
     parts = [p for p in (style_part, waku_part) if p]
     note = f"[実測] {' / '.join(parts)} {entry_count}頭"
-    if pace_part:
-        note += f" {pace_part}"
-    note += "(post_position×finish_positionの機械集計。脚質は past_performances のcorner_positions由来、対象馬のみ)"
+    if style_caveat:
+        note += f" {style_caveat}"
+    # 実測ペースを優先し、無い場合のみnetkeibaのpace_markラベルにフォールバックする。
+    if pace_real_part:
+        note += f" {pace_real_part}"
+    elif pace_counter:
+        note += f" [pace(netkeiba):{pace_counter.most_common(1)[0][0]}]"
+    if agari_part:
+        note += f" [上がり:{agari_part}]"
+    note += "(post_position×finish_positionの機械集計。脚質は past_performances のcorner_positions由来、対象馬のみ。ペースはJV-Link実測前後半3F)"
     return note
 
 

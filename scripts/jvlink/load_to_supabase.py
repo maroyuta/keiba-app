@@ -250,6 +250,20 @@ def build_race_payload(row: dict) -> dict:
     grade_cd = (row.get("grade_cd") or "").strip()
     payload["grade"] = GRADE_NAMES.get(grade_cd)
 
+    # 実測ペース(JV-Link RA由来、2026-08-08追加)。parse_ra()が既に切り出している
+    # 前半3ハロン(haron_time_s3)・後半3ハロン=上がり3F(haron_time_l3)・1ハロンごとのラップ25本
+    # (lap_time1..25)を races.first_3f_sec/last_3f_sec/lap_times_sec へ載せる。従来は parse 済みなのに
+    # ここで捨てていた。トラックバイアス判定が「前有利がスロー起因か本物か」を裏取りするための一次データ。
+    # スケールはJV-Dataの1/10秒(例 "342"→34.2秒)。値の無いレース(短距離でハロン数が少ない等)はNone。
+    payload["first_3f_sec"] = to_float_scaled(row.get("haron_time_s3", ""), 10)
+    payload["last_3f_sec"] = to_float_scaled(row.get("haron_time_l3", ""), 10)
+    lap_times = []
+    for i in range(1, 26):
+        lap = to_float_scaled(row.get(f"lap_time{i}", ""), 10)
+        if lap is not None and lap > 0:
+            lap_times.append(lap)
+    payload["lap_times_sec"] = lap_times or None
+
     return payload
 
 
