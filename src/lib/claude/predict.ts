@@ -1,3 +1,4 @@
+import { jsonrepair } from "jsonrepair";
 import { anthropic, CLAUDE_MODELS, extractText } from "./client";
 import {
   STANDARD_SYSTEM_PROMPT,
@@ -71,7 +72,19 @@ function parseJsonResponse<T>(text: string): T {
     .replace(/^```(?:json)?\n?/, "")
     .replace(/\n?```$/, "")
     .trim();
-  return JSON.parse(cleaned) as T;
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch (firstErr) {
+    // JSONが壊れていた場合の救済(2026-08-09、失敗根絶)。未終端文字列・途中切れ・制御文字混入などを
+    // jsonrepairで機械修復してから再パースする。API再呼び出しは行わない=追加課金ゼロ、成功パスは不変。
+    try {
+      const parsed = JSON.parse(jsonrepair(cleaned)) as T;
+      console.warn("[parseJsonResponse] 壊れたJSONをjsonrepairで修復して継続しました");
+      return parsed;
+    } catch {
+      throw firstErr; // 修復も不可なら元のエラーを投げる(呼び出し側でusage記録→502)
+    }
+  }
 }
 
 // 一次スクリーニング (Haiku 4.5): 全レースをS〜Cで評価する軽量コール。

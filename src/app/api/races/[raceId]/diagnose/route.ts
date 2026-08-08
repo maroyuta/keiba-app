@@ -779,6 +779,35 @@ export async function POST(
   }
   const { input, biasReferenceRaceId } = loaded;
 
+  // ── 対象外クラスの最上流フィルタ(全ガード・全課金・本気診断より前) ──
+  // 障害/新馬/未勝利、および1勝クラスは、どの経路(通常POST・?tier=premium・force=1)でも
+  // 一切診断しない。⚠️当日netkeiba同期レースは race_class がnullになりがち(parseShutubaの
+  // クラス解析が当日ページで空を返す)ため、race_class だけに頼らず race_name も併用して判定する
+  // (2026-08-09、当日診断で除外が効かず無駄課金していた事故対応)。
+  {
+    const rc = input.race.race_class ?? "";
+    const rn = input.race.race_name ?? "";
+    if (input.race.track_type === "障害") {
+      return NextResponse.json({ tier: "skipped", reason: "障害レースは診断対象外" });
+    }
+    if (rc.includes("新馬") || rn.includes("新馬")) {
+      return NextResponse.json({ tier: "skipped", reason: "新馬戦は診断対象外" });
+    }
+    if (rc.includes("未勝利") || rn.includes("未勝利")) {
+      return NextResponse.json({ tier: "skipped", reason: "未勝利戦は診断対象外" });
+    }
+    // 1勝クラスは実測ROI 69%(全クラス最低かつ最多購入=n160)で継続的に負けているため診断・購入とも
+    // 対象外(2026-08-09 ユーザー決定, race_recommendation_results)。予算削減とROI改善の両取り。
+    // ⚠️「◯◯特別」名の1勝クラス(石狩特別等)は名前ではクラスを判別できず(年で1勝/2勝が変動)、
+    //   race_classが埋まらない当日は取りこぼす。恒久対策はparseShutubaのrace_class解析修正(別課題)。
+    if (
+      rc.includes("1勝") || rc.includes("１勝") || rc.includes("500万") ||
+      rn.includes("1勝クラス") || rn.includes("１勝クラス")
+    ) {
+      return NextResponse.json({ tier: "skipped", reason: "1勝クラスは対象外(実測ROI最低のため除外)" });
+    }
+  }
+
   // 二重課金の構造的防止(2026-08-09、二重実行事故を受けて追加。金曜→土曜のまたぎ重複も潰すため
   // 「当日」ではなく「そのレースが過去に一度でも成功診断済みか」で判定する)。
   // race_idは特定日の1レースを一意に指すので、同じrace_idを再診断する理由は
@@ -871,20 +900,6 @@ export async function POST(
       }
       throw err;
     }
-  }
-
-  // 障害レース・新馬戦・未勝利戦はコスト対象外 (screeningのHaiku呼び出しすら行わない)。
-  // 未勝利は2026-07-13にユーザーが追加(基本的に馬券を買わないクラスのため)。
-  // どちらもload_to_supabase.pyのjyoken_cd由来race_class修正が前提(修正前はrace_classが
-  // 常にnullで、この判定が実質機能していなかった)。
-  if (input.race.track_type === "障害") {
-    return NextResponse.json({ tier: "skipped", reason: "障害レースは診断対象外" });
-  }
-  if (input.race.race_class?.includes("新馬")) {
-    return NextResponse.json({ tier: "skipped", reason: "新馬戦は診断対象外" });
-  }
-  if (input.race.race_class?.includes("未勝利")) {
-    return NextResponse.json({ tier: "skipped", reason: "未勝利戦は診断対象外" });
   }
 
   // 重賞(grade設定あり)は「問答無用で購入する」対象のため、少頭数チェックにもscreeningの
