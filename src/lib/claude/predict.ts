@@ -119,6 +119,28 @@ export async function screenRace(
   throw lastError;
 }
 
+// LLMのJSON出力でoptionalな数値/文字列フィールド(honmei_horse_number等)が省略されると、
+// JSON.parseはそのキーを持たないオブジェクトを返し、`as DiagnosisResult`キャストは型チェックを
+// すり抜けて実行時にはJS undefinedになる(DiagnosisResultの型定義は`number | null`でundefinedを
+// 想定していない)。route.tsのガード群(enforcePopularityGuard等)は`!== null`判定でundefinedを
+// 見逃すため、素通りしたundefinedがそのままrace_rank_reasonの文字列に"undefined"として混入する
+// 事故が起きた(2026-08-09、UHB賞でhonmei_horse_numberが有効なS評価の買い目を無効化した)。
+// パース直後にここで一括してundefined→nullへ正規化し、以降の全コードが型定義(number | null)を
+// 実際に信頼できる状態にする。
+function normalizeDiagnosisResult(result: DiagnosisResult): DiagnosisResult {
+  return {
+    ...result,
+    honmei_horse_number: result.honmei_horse_number ?? null,
+    aite_horse_number: result.aite_horse_number ?? null,
+    aite_horse_number_2: result.aite_horse_number_2 ?? null,
+    bet_type: result.bet_type ?? null,
+    bet_amount_wide: result.bet_amount_wide ?? null,
+    bet_amount_umaren: result.bet_amount_umaren ?? null,
+    bet_amount_wide_2: result.bet_amount_wide_2 ?? null,
+    bet_amount_umaren_2: result.bet_amount_umaren_2 ?? null,
+  };
+}
+
 // 診断レスポンスのJSONパースに失敗した時に投げるエラー。⚠️重要: standard/premiumは
 // stream完走後にparseするため、parseが落ちても「Anthropicへのトークン課金は既に発生している」。
 // このエラーにusageを載せて呼び出し側(route)へ渡し、失敗回もapi_usage_logに必ず記録させる
@@ -157,7 +179,8 @@ export async function diagnoseRaceStandard(
   const message = await stream.finalMessage();
   const usage = buildUsageInfo(CLAUDE_MODELS.standard, message.usage);
   try {
-    return { result: parseJsonResponse<DiagnosisResult>(extractText(message)), usage };
+    const result = normalizeDiagnosisResult(parseJsonResponse<DiagnosisResult>(extractText(message)));
+    return { result, usage };
   } catch (err) {
     throw new DiagnosisParseError(err, usage);
   }
@@ -195,7 +218,8 @@ export async function diagnoseRacePremium(
   const message = await stream.finalMessage();
   const usage = buildUsageInfo(CLAUDE_MODELS.premium, message.usage);
   try {
-    return { result: parseJsonResponse<DiagnosisResult>(extractText(message)), usage };
+    const result = normalizeDiagnosisResult(parseJsonResponse<DiagnosisResult>(extractText(message)));
+    return { result, usage };
   } catch (err) {
     throw new DiagnosisParseError(err, usage);
   }
