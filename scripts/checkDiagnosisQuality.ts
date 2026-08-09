@@ -58,7 +58,7 @@ async function main() {
 
     const { data: entries } = await supabase
       .from("race_entries")
-      .select("horse_number, horse_id, expected_popularity, odds_win")
+      .select("horse_number, horse_id, expected_popularity, odds_win, horse_rank, horse_rank_comment")
       .eq("race_id", r.id);
     const ent = entries ?? [];
     const popOf = (hn: number | null) =>
@@ -109,6 +109,30 @@ async function main() {
       if ((count ?? 0) <= 1) {
         findings.push(`${label} [違反] ${tag}${hn}番の過去走が${count ?? 0}件=データ不足なのに買い目採用`);
       }
+    }
+
+    // ★上位人気を"消した"馬を毎回レビュー対象に surface する(2026-08-09、ユーザー要望)。
+    // 額面着順で実力馬を誤って危険消しする(UHB賞ナムラクララ)のを防ぐため、上位人気(≤3番人気)なのに
+    // 買い目から外した馬を必ず列挙し、「条件補正した実像で 危険(消し) か 妙味(相手) か」を見直す対象にする。
+    // 短評に危険/妙味の判定語が無い"黙って消し"は特に注意([要確認・判定なし])。
+    const boughtSet = new Set(
+      [r.honmei_horse_number, r.aite_horse_number, r.aite_horse_number_2].filter(
+        (x): x is number => x != null,
+      ),
+    );
+    for (const e of ent) {
+      const pop = e.expected_popularity;
+      if (pop == null || pop > 3) continue; // 上位人気(≤3番人気)のみ
+      if (boughtSet.has(e.horse_number)) continue; // 買った馬は対象外
+      const c = (e.horse_rank_comment ?? "").trim();
+      // 昇級初戦除外・データ不足は「額面着順で消した」対象ではなくルール由来の正当な除外なのでノイズとして外す
+      if (/昇級|データ不足|評価不能/.test(c)) continue;
+      const hasVerdict = /危険|妙味/.test(c);
+      const tag = hasVerdict ? "[要確認]" : "[要確認・判定なし]";
+      const snippet = c ? c.slice(0, 60) : "(短評なし)";
+      findings.push(
+        `${label} ${tag} ${e.horse_number}番=${pop}番人気を消し(買い目外)。危険か妙味か条件補正で再確認: 「${snippet}」`,
+      );
     }
   }
 
