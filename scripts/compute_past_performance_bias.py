@@ -324,12 +324,32 @@ def build_row_note(group_bias: dict, row: dict) -> str:
         style_fit = horse_style_dir * group_bias["style_dir"]
 
     total_fit = fit_score + style_fit
+
+    # ★着順を掛け合わせて「価値の方向(度外視/上方修正 or 減額)」まで明示する(2026-08-09、ユーザー指摘)。
+    # 着順は絶対評価ではなく、バイアスの有利/不利を差し引いて解釈する。特に「バイアス不利で沈んだ大敗」は
+    # 着順を度外視〜上方修正し、逆に「バイアス有利で拾った好走」は額面ほどの価値を認めない。
+    finish_ratio = None
+    if row.get("finish_position") and row.get("entry_count") and row["entry_count"] > 0:
+        finish_ratio = row["finish_position"] / row["entry_count"]
+    good_finish = finish_ratio is not None and (finish_ratio <= 0.35 or row["finish_position"] <= 3)
+    bad_finish = finish_ratio is not None and finish_ratio >= 0.6
+
     if group_bias["waku_dir"] == 0 and group_bias["style_dir"] == 0:
         verdict = None  # レース自体がバイアスフラットなので個別馬の判定はしない
-    elif total_fit > 0:
-        verdict = "バイアス有利だった中での結果"
-    elif total_fit < 0:
-        verdict = "バイアス不利だった中での結果"
+    elif total_fit > 0:  # この馬はバイアス有利側だった
+        if good_finish:
+            verdict = "この好走はバイアス恩恵込み＝額面ほどの価値はない(素の能力の証明としては弱い。今回同じ恩恵が無ければ割り引く)"
+        elif bad_finish:
+            verdict = "バイアス有利だったのに凡走＝地力不足の可能性(言い訳の効かない負け)"
+        else:
+            verdict = "バイアス有利だった中での結果(額面よりやや割り引く)"
+    elif total_fit < 0:  # この馬はバイアス不利側だった
+        if good_finish:
+            verdict = "★バイアス逆行の好走＝素の地力は上位の証(高く評価してよい)"
+        elif bad_finish:
+            verdict = "★この大敗はバイアス不利で沈んだ可能性＝額面ほど能力は低くない(着順は度外視〜上方修正すべき、額面で減点しない)"
+        else:
+            verdict = "バイアス不利だった中での結果(額面より上に見てよい)"
     else:
         verdict = "バイアスの影響は混在(枠・脚質で有利不利が相殺)"
 
