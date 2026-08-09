@@ -49,6 +49,14 @@ export interface ParsedHorseHistoryEntry {
   agari3fSec: number | null;
   horseWeightKg: number | null;
   horseWeightDiffKg: number | null;
+  // netkeiba馬ページの「能力を測る指数」列(従来捨てていた)。
+  timeIndex: number | null; // タイム指数(正規化した絶対能力の目安)
+  startIndex: number | null; // スタート指数(テンの速さ)
+  chaseIndex: number | null; // 追走指数(道中の追走力)
+  closingIndex: number | null; // 上がり指数(末脚)
+  trackIndex: number | null; // 馬場指数
+  paceFirst3f: number | null; // そのレースの前半3F秒(ペース列の前半)
+  paceLast3f: number | null; // そのレースの後半3F秒(ペース列の後半)
 }
 
 function parseFinishTimeSec(text: string): number | null {
@@ -91,7 +99,9 @@ function parseDistance(text: string): { trackType: TrackType | null; distanceM: 
 function buildHeaderIndex($: cheerio.CheerioAPI): Map<string, number> {
   const index = new Map<string, number>();
   $("table.db_h_race_results thead th").each((i, el) => {
-    const text = $(el).text().replace(/\s+/g, "");
+    // 半角カナ(ﾀｲﾑ指数/ｽﾀｰﾄ指数等)をNFKCで全角化してから空白除去する。既存の全角見出し
+    // (日付・距離・タイム等)はNFKCで不変なので影響なし。指数系の半角見出しだけが拾えるようになる。
+    const text = $(el).text().normalize("NFKC").replace(/\s+/g, "");
     if (text && !index.has(text)) {
       index.set(text, i);
     }
@@ -103,6 +113,36 @@ function cellText($: cheerio.CheerioAPI, tds: Element[], headerIndex: Map<string
   const idx = headerIndex.get(name);
   if (idx === undefined || !tds[idx]) return "";
   return $(tds[idx]).text().replace(/\s+/g, "").trim();
+}
+
+// 見出しが接頭辞で始まる列の値を返す(指数系はツールチップ文が後ろに付くためstartsWithで拾う)。
+// excludePrefixを指定するとそれで始まる見出し(例: タイム指数M)は除外する。
+function cellByPrefix(
+  $: cheerio.CheerioAPI,
+  tds: Element[],
+  headerIndex: Map<string, number>,
+  prefix: string,
+  excludePrefix?: string,
+): string {
+  for (const [key, idx] of headerIndex) {
+    if (key.startsWith(prefix) && (!excludePrefix || !key.startsWith(excludePrefix)) && tds[idx]) {
+      return $(tds[idx]).text().replace(/\s+/g, "").trim();
+    }
+  }
+  return "";
+}
+
+// "91"のような整数文字列をintで返す(空・非数値はnull)。負値(馬場指数の-21等)も許容。
+function parseIntCell(text: string): number | null {
+  if (!/^-?\d+$/.test(text)) return null;
+  return Number(text);
+}
+
+// netkeibaペース列 "34.2-34.2" を前半3F・後半3Fに分解する。
+function parsePace(text: string): { first: number | null; last: number | null } {
+  const m = text.match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/);
+  if (!m) return { first: null, last: null };
+  return { first: Number(m[1]), last: Number(m[2]) };
 }
 
 function parseHistoryRow(
@@ -162,6 +202,16 @@ function parseHistoryRow(
     agari3fSec: Number(cellText($, tds, headerIndex, "上り")) || null,
     horseWeightKg: weightKg,
     horseWeightDiffKg: diffKg,
+    // 能力を測る指数列(NFKC正規化済みの見出しをstartsWithで拾う)。
+    timeIndex: parseIntCell(cellByPrefix($, tds, headerIndex, "タイム指数", "タイム指数M")),
+    startIndex: parseIntCell(cellByPrefix($, tds, headerIndex, "スタート指数")),
+    chaseIndex: parseIntCell(cellByPrefix($, tds, headerIndex, "追走指数")),
+    closingIndex: parseIntCell(cellByPrefix($, tds, headerIndex, "上がり指数")),
+    trackIndex: parseIntCell(cellText($, tds, headerIndex, "馬場指数")),
+    ...(() => {
+      const p = parsePace(cellText($, tds, headerIndex, "ペース"));
+      return { paceFirst3f: p.first, paceLast3f: p.last };
+    })(),
   };
 }
 

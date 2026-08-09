@@ -362,6 +362,13 @@ export type Database = {
       past_performances: {
         Row: {
           agari_3f_sec: number | null
+          chase_index: number | null
+          closing_index: number | null
+          pace_first_3f: number | null
+          pace_last_3f: number | null
+          start_index: number | null
+          time_index: number | null
+          track_index: number | null
           bias_note: string | null
           corner_positions: string | null
           created_at: string
@@ -401,6 +408,13 @@ export type Database = {
         }
         Insert: {
           agari_3f_sec?: number | null
+          chase_index?: number | null
+          closing_index?: number | null
+          pace_first_3f?: number | null
+          pace_last_3f?: number | null
+          start_index?: number | null
+          time_index?: number | null
+          track_index?: number | null
           bias_note?: string | null
           corner_positions?: string | null
           created_at?: string
@@ -440,6 +454,13 @@ export type Database = {
         }
         Update: {
           agari_3f_sec?: number | null
+          chase_index?: number | null
+          closing_index?: number | null
+          pace_first_3f?: number | null
+          pace_last_3f?: number | null
+          start_index?: number | null
+          time_index?: number | null
+          track_index?: number | null
           bias_note?: string | null
           corner_positions?: string | null
           created_at?: string

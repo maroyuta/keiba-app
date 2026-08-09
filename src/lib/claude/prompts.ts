@@ -1049,10 +1049,32 @@ function serializePastPerformance(pp: PastPerformanceRow) {
     likely_wide_trip: inferWideTripRisk(pp.post_position, pp.corner_positions, pp.entry_count), // 外枠発走×全コーナー中団より前を維持、からの推測(映像・回顧なし、確定情報ではない)
     pace_mark: pp.pace_mark,
     agari_3f_sec: pp.agari_3f_sec,
+    // ★そのレースの実測前後半3F(netkeiba由来、ほぼ全走で取得)。pace_shapeは前後半差からの機械判定:
+    //   前傾/ハイ=前半が1.0秒以上速い(前が潰れ差し有利)、後傾/スロー=後半が1.0秒以上速い(前残り・先行有利)。
+    //   「その好走が実測スローの前残りで拾ったものか、ハイを差した本物か」を過去走ごとに判定するための一次情報。
+    pace_first_3f: pp.pace_first_3f,
+    pace_last_3f: pp.pace_last_3f,
+    pace_shape: computePaceShape(pp.pace_first_3f, pp.pace_last_3f),
+    // netkeibaの能力指数(タイム指数=正規化した絶対能力等)。履歴分は有料化で欠けることが多く、
+    // 取得できた走(主に最新走)のみ値が入る。nullは「未取得」であり能力が低い意味ではない。
+    time_index: pp.time_index,
+    start_index: pp.start_index,
+    chase_index: pp.chase_index,
+    closing_index: pp.closing_index,
+    track_index: pp.track_index,
     bias_note: pp.bias_note,
     trouble_note: pp.trouble_note,
     level_verification_note: pp.level_verification_note,
   };
+}
+
+// 前後半3Fの差からレースのペース形状を機械判定する(展開・フロック判定の即使える一次情報)。
+function computePaceShape(first: number | null, last: number | null): string | null {
+  if (first == null || last == null) return null;
+  const diff = first - last; // 正=前半が遅い(後傾/スロー)、負=前半が速い(前傾/ハイ)
+  if (diff <= -1.0) return "前傾(ハイ)"; // 前半が1.0秒以上速い→前が潰れ差し有利
+  if (diff >= 1.0) return "後傾(スロー)"; // 後半が1.0秒以上速い→前残り・先行有利
+  return "平均";
 }
 
 function serializePedigree(pedigree: HorsePedigreeRow | null) {

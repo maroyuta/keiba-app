@@ -94,6 +94,13 @@ export async function syncHorseHistory(jvHorseIds: string[]): Promise<HorseHisto
         corner_positions: entry.cornerPositions,
         pace_mark: null,
         agari_3f_sec: entry.agari3fSec,
+        time_index: entry.timeIndex,
+        start_index: entry.startIndex,
+        chase_index: entry.chaseIndex,
+        closing_index: entry.closingIndex,
+        track_index: entry.trackIndex,
+        pace_first_3f: entry.paceFirst3f,
+        pace_last_3f: entry.paceLast3f,
       };
 
       const { error: upsertError } = await supabase
