@@ -18,6 +18,21 @@ function buildHorseResultUrl(jvHorseId: string): string {
   return `https://db.netkeiba.com/horse/result/${jvHorseId}/`;
 }
 
+// netkeibaのレース名からクラスを導出する(名前にクラスが含まれる: "3歳以上1勝クラス"・"青函S(OP)"・
+// "愛知杯(GIII)"・旧表記"500万下"等)。特別戦で名前にクラスが無いものはnull(判別不能)。
+// 2026-08-09、past_performances.race_classが4%しか埋まっていなかった導線の穴埋め。
+function deriveRaceClass(raceName: string | null): string | null {
+  if (!raceName) return null;
+  if (/新馬/.test(raceName)) return "新馬";
+  if (/未勝利/.test(raceName)) return "未勝利";
+  if (/3勝|３勝|1600万/.test(raceName)) return "3勝クラス";
+  if (/2勝|２勝|1000万/.test(raceName)) return "2勝クラス";
+  if (/1勝|１勝|500万/.test(raceName)) return "1勝クラス";
+  if (/\(G[I1２3３]|\(Jpn|\(GⅠ|\(GⅡ|\(GⅢ/.test(raceName)) return "オープン(重賞)";
+  if (/\(L\)|\(OP\)|オープン/.test(raceName)) return "オープン";
+  return null;
+}
+
 export async function syncHorseHistory(jvHorseIds: string[]): Promise<HorseHistorySyncSummary[]> {
   const supabase = createNetkeibaSyncClient();
   const summaries: HorseHistorySyncSummary[] = [];
@@ -74,7 +89,7 @@ export async function syncHorseHistory(jvHorseIds: string[]): Promise<HorseHisto
         race_number: entry.raceNumber,
         race_name: entry.raceName,
         grade: null,
-        race_class: null,
+        race_class: deriveRaceClass(entry.raceName),
         track_type: entry.trackType,
         distance_m: entry.distanceM,
         track_condition: entry.trackCondition,
