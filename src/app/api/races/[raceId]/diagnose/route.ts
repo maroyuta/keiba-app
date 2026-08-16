@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { screenRace, diagnoseRaceStandard, diagnoseRacePremium, DiagnosisParseError } from "@/lib/claude/predict";
 import type { UsageInfo } from "@/lib/claude/predict";
-import type { RaceDiagnosisInput, DiagnosisResult, BiasReferenceRace } from "@/lib/claude/prompts";
+import { inferRunningStyle } from "@/lib/claude/prompts";
+import type {
+  RaceDiagnosisInput,
+  DiagnosisResult,
+  BiasReferenceRace,
+  EntryDiagnosisInput,
+} from "@/lib/claude/prompts";
 import type { RaceRow, UsageLogTier } from "@/lib/supabase/database.types";
 import { capDailySRank, capDailyBuyCandidates } from "@/lib/rank/capDailySRank";
 
@@ -246,6 +252,82 @@ function enforceClassUpGuard(
   return {
     ...updated,
     race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${notes.join("、")}は今回のクラスでの実績が1走以下(昇級初戦または2戦目)のため、機械的に見送りへ変更した。`,
+  };
+}
+
+// 重賞限定: 前有利バイアスが確定しているのに、常用脚質が追込(いつも最後方から)の馬を相手(aite)に
+// 選んでしまう事故が繰り返し発生した(2026-08-16、中京記念のナムラコスモス=15着大敗が典型例)。
+// prompts.ts側で「バイアス逆行の好走1本では例外にしない」と指示しても、LLMが個別の一走を理由に
+// 例外運用してしまうため、書き込み直前にコード側で機械的に判定する。まず重賞のみに絞って効果を
+// 見てから全レースへ広げるかを判断する方針(2026-08-16、ユーザー判断)。
+// predicted_bias_style/confidenceはLLMの新しい構造化出力(2026-08-16追加)で、旧レスポンス互換の
+// ため欠落もありうる。値が無い(=front以外)場合はこのガードを発動させない(fail-safe)。
+function getTypicalRunningStyle(entry: EntryDiagnosisInput): string | null {
+  const recentStyles = entry.pastPerformances
+    .filter((pp) => !!pp.corner_positions && !!pp.entry_count)
+    .slice(0, 3) // pastPerformancesはrace_date降順で取得済みの前提(直近が先頭)
+    .map((pp) => inferRunningStyle(pp.corner_positions, pp.entry_count))
+    .filter((style): style is string => style !== null);
+  if (recentStyles.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const style of recentStyles) counts.set(style, (counts.get(style) ?? 0) + 1);
+  let mostCommon: string | null = null;
+  let mostCommonCount = 0;
+  for (const [style, count] of counts) {
+    if (count > mostCommonCount) {
+      mostCommon = style;
+      mostCommonCount = count;
+    }
+  }
+  return mostCommon;
+}
+
+function enforceGradedCloserGuard(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): DiagnosisResult {
+  if (!input.race.grade) return result; // 重賞限定
+  if (result.predicted_bias_style !== "front") return result; // 前有利確定時のみ発動
+
+  const isTypicalCloser = (horseNumber: number | null): boolean => {
+    if (horseNumber === null) return false;
+    const entry = input.entries.find((e) => e.entry.horse_number === horseNumber);
+    if (!entry) return false;
+    return getTypicalRunningStyle(entry) === "追込";
+  };
+
+  let updated = result;
+  const notes: string[] = [];
+
+  // aite(1人目)が常用追込なら、本命込みで買い目全体を見送りにする(class-up guardと同じ設計)。
+  if (updated.aite_horse_number !== null && isTypicalCloser(updated.aite_horse_number)) {
+    notes.push(`相手${updated.aite_horse_number}番`);
+    updated = {
+      ...updated,
+      honmei_horse_number: null,
+      aite_horse_number: null,
+      aite_horse_number_2: null,
+      bet_type: null,
+      bet_amount_wide: null,
+      bet_amount_umaren: null,
+      bet_amount_wide_2: null,
+      bet_amount_umaren_2: null,
+    };
+  }
+
+  if (updated.aite_horse_number_2 !== null && isTypicalCloser(updated.aite_horse_number_2)) {
+    notes.push(`相手2 ${updated.aite_horse_number_2}番`);
+    updated = { ...updated, aite_horse_number_2: null, bet_amount_wide_2: null, bet_amount_umaren_2: null };
+  }
+
+  if (notes.length === 0) return updated;
+
+  console.warn(
+    `[graded-closer-guard] race ${notes.join("、")}が常用追込×前有利バイアスのため機械的に見送りへ変更`,
+  );
+  return {
+    ...updated,
+    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${notes.join("、")}は常用脚質が追込で、今回は前有利バイアス(確信度${result.predicted_bias_confidence ?? "不明"})のため、重賞限定ガードにより機械的に見送りへ変更した。`,
   };
 }
 
@@ -706,7 +788,10 @@ async function persistDiagnosis(
   const result = applyFixedBetSplit(
     enforceRaceViabilityGuard(
       input,
-      enforcePopularityGuard(input, enforceClassUpGuard(input, rawResult)),
+      enforcePopularityGuard(
+        input,
+        enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
+      ),
     ),
   );
   await supabase

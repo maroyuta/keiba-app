@@ -88,6 +88,10 @@ export interface DiagnosisResult {
   race_rank_reason: string;
   race_priority_score: number;
   predicted_bias: string;
+  // predicted_biasを機械判定に使えるよう構造化した値(2026-08-16追加)。LLMが必ず出力する契約だが、
+  // 旧バージョンのレスポンスやパース漏れでundefined/nullになりうるため、利用側は必ずnull許容で扱うこと。
+  predicted_bias_style?: "front" | "back" | "flat" | null;
+  predicted_bias_confidence?: "high" | "medium" | "low" | null;
   entries: DiagnosisEntryResult[];
   honmei_horse_number: number | null;
   aite_horse_number: number | null;
@@ -844,6 +848,12 @@ const OUTPUT_FORMAT_RULES = `## 出力形式
   "race_rank_reason": string,
   "race_priority_score": number,  // 0-100、レース間で比較可能な妙味・確信度のスコア(race_rankの節を参照)
   "predicted_bias": string,     // 想定トラックバイアス (例: 「内前有利、差しは届きにくい」)
+  "predicted_bias_style": "front" | "back" | "flat",  // predicted_biasの脚質面の結論を構造化した値。
+    // front=前有利(逃げ・先行が残りやすい)、back=差し・追込有利、flat=どちらとも言えない/明確な傾向なし。
+    // predicted_biasの文章と必ず一致させること(コード側の機械ガードがこの値だけを見て判定に使うため)。
+  "predicted_bias_confidence": "high" | "medium" | "low",  // predicted_bias_styleの確信度。
+    // course_bias_profileの多年傾向とbias_reference_racesの直近実況が一致していればhigh、
+    // どちらか一方のみ・参照データが薄い場合はmedium、一般論のみで具体的な参照データが無い場合はlow。
   "entries": [
     {
       "horse_number": number,
@@ -993,7 +1003,7 @@ function parseCornerPositions(cornerPositions: string | null): number[] {
 // 判定できるよう、明示的なラベルにして渡す(2026-07-18)。pace_markはバックフィル分がほぼ空
 // (per-horseページにレースペースが載らないため)だが、corner_positionsは99%充足しているため
 // こちらから導出するのが実用的。あくまで簡易推定である旨はrunning_style_note側で明示する。
-function inferRunningStyle(
+export function inferRunningStyle(
   cornerPositions: string | null,
   entryCount: number | null,
 ): string | null {
