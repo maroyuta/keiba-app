@@ -380,6 +380,149 @@ function enforceGradedCloserGuard(
   };
 }
 
+// レースレベル(相手のレベル)を数値化する(2026-08-19、ユーザー指摘: 「3歳牝馬とかまだ上と走った
+// 事ないのに評価される」問題)。従来のenforceClassUpGuard(isEarlyClassUp)は「非未勝利/新馬の
+// 実績が1走以下」という粗い判定のみで、①同一クラス内でも年齢限定戦(3歳限定)しか経験が無く
+// 古馬混合戦(3歳以上)が今回初めてというケース、②そもそも今回の証明済み最高クラスでどの程度
+// 通用したか(勝った/僅差/大敗)、のどちらも見ていなかった。バイアス適合度スコアと同じ設計思想
+// (曖昧な「まだ上と走ってない」という感覚を、race_name文字列から機械的・決定論的に数値化する)
+// で実装する。past_performances.race_class/gradeはnetkeiba経由のデータで欠損が多いため
+// (syncHorseHistory.tsはgradeを常にnull書き込み、race_classもderiveRaceClassで年齢条件を
+// 保持しない簡易バケットのみ)、既存のMAIDEN_TIER_PATTERN/isEarlyClassUpと同じくrace_name
+// (100%充足)からの正規表現抽出に統一する。
+//
+// tierPointsは絶対的な指標ではなく相対比較用の序数(高いほど格上)。G1=100を上限に、
+// クラス間の単純な序列を数値化しただけの一次近似(2026-08-19時点)。
+function classifyRaceLevelFromName(
+  raceName: string | null,
+): { tierPoints: number; ageOpen: boolean; label: string } | null {
+  if (!raceName) return null;
+  // JRA公式の年齢条件表記は「◯歳以上」。「以上」の有無で年齢限定戦か古馬混合戦かを判定する
+  // (例: 「3歳以上1勝クラス」=古馬混合、「3歳1勝クラス」=同世代限定)。
+  const ageOpen = /以上/.test(raceName);
+  // グレード表記はnetkeiba race_nameでは(GIII)のようなローマ数字表記のため、部分文字列の
+  // 誤マッチ(GIIIがGIIを含む)を避けるため長い表記から先に判定する。
+  if (/\(GIII\)/.test(raceName) || /\(Jpn3\)/.test(raceName)) return { tierPoints: 88, ageOpen, label: "G3" };
+  if (/\(GII\)/.test(raceName) || /\(Jpn2\)/.test(raceName)) return { tierPoints: 94, ageOpen, label: "G2" };
+  if (/\(GI\)/.test(raceName) || /\(Jpn1\)/.test(raceName)) return { tierPoints: 100, ageOpen, label: "G1" };
+  if (/\(重賞\)/.test(raceName)) return { tierPoints: 80, ageOpen, label: "重賞(地方等・格付不明)" };
+  if (/\(L\)/.test(raceName)) return { tierPoints: 76, ageOpen, label: "リステッド" };
+  if (/\(OP\)|オープン/.test(raceName)) return { tierPoints: 70, ageOpen, label: "オープン" };
+  if (/3勝|３勝|1600万/.test(raceName)) return { tierPoints: 65, ageOpen, label: "3勝クラス" };
+  if (/2勝|２勝|1000万/.test(raceName)) return { tierPoints: 50, ageOpen, label: "2勝クラス" };
+  if (/1勝|１勝|500万/.test(raceName)) return { tierPoints: 30, ageOpen, label: "1勝クラス" };
+  if (/未勝利/.test(raceName)) return { tierPoints: 10, ageOpen, label: "未勝利" };
+  if (/新馬/.test(raceName)) return { tierPoints: 8, ageOpen, label: "新馬" };
+  return null; // 特別戦名のみでクラスが名前から判別できない(稀)
+}
+
+// 今回のレースのレベルは races.grade(信頼度が高い、専用列)を優先し、無ければ
+// races.race_class(JV-Link由来の正式条件文、または簡易バケット)のテキストから同じ序列で判定する。
+function classifyTodayRaceLevel(
+  race: RaceDiagnosisInput["race"],
+): { tierPoints: number; ageOpen: boolean; label: string } | null {
+  const ageOpen = !!race.race_class && /以上/.test(race.race_class);
+  if (race.grade === "G1") return { tierPoints: 100, ageOpen, label: "G1" };
+  if (race.grade === "G2") return { tierPoints: 94, ageOpen, label: "G2" };
+  if (race.grade === "G3") return { tierPoints: 88, ageOpen, label: "G3" };
+  const text = race.race_class ?? "";
+  if (/オープン/.test(text)) return { tierPoints: 70, ageOpen, label: "オープン" };
+  if (/３勝クラス|3勝クラス|収得賞金1600万円以下/.test(text)) return { tierPoints: 65, ageOpen, label: "3勝クラス" };
+  if (/２勝クラス|2勝クラス|収得賞金1000万円以下/.test(text)) return { tierPoints: 50, ageOpen, label: "2勝クラス" };
+  if (/１勝クラス|1勝クラス|収得賞金500万円以下/.test(text)) return { tierPoints: 30, ageOpen, label: "1勝クラス" };
+  if (/未勝利/.test(text)) return { tierPoints: 10, ageOpen, label: "未勝利" };
+  if (/新馬/.test(text)) return { tierPoints: 8, ageOpen, label: "新馬" };
+  return null;
+}
+
+interface RaceLevelGap {
+  gapPoints: number; // 今回tierPoints - 証明済み最高tierPoints (プラス=格上挑戦)
+  provenTierLabel: string;
+  todayTierLabel: string;
+  firstTimeVsOlder: boolean; // 今回は古馬混合戦なのに、過去に古馬混合戦の出走が一度も無い
+  bestLevelQuality: "won" | "competitive" | "beaten" | "unknown"; // 証明済み最高クラスでの戦績の質
+}
+
+function computeRaceLevelGap(
+  entry: EntryDiagnosisInput,
+  race: RaceDiagnosisInput["race"],
+): RaceLevelGap | null {
+  const today = classifyTodayRaceLevel(race);
+  if (!today) return null;
+  const pastLevels = entry.pastPerformances
+    .map((pp) => ({ level: classifyRaceLevelFromName(pp.race_name), pp }))
+    .filter(
+      (x): x is { level: { tierPoints: number; ageOpen: boolean; label: string }; pp: typeof entry.pastPerformances[number] } =>
+        x.level !== null,
+    );
+  if (pastLevels.length === 0) {
+    // 過去走はあるがクラス判別できるレース名が一つもない(データ欠損)場合は、証明済みクラス=最下層
+    // (未勝利未満)とみなし、今回とのギャップをそのまま今回のtierPointsとして扱う(=最大限に警戒)。
+    return {
+      gapPoints: today.tierPoints,
+      provenTierLabel: "実績なし/不明",
+      todayTierLabel: today.label,
+      firstTimeVsOlder: today.ageOpen,
+      bestLevelQuality: "unknown",
+    };
+  }
+  const provenTierPoints = Math.max(...pastLevels.map((x) => x.level.tierPoints));
+  const provenAgeOpen = pastLevels.some((x) => x.level.ageOpen);
+  const provenTierLabel = pastLevels.find((x) => x.level.tierPoints === provenTierPoints)!.level.label;
+  const bestLevelRuns = pastLevels.filter((x) => x.level.tierPoints === provenTierPoints);
+  const margins = bestLevelRuns.map((x) => x.pp.margin_sec).filter((m): m is number => m !== null);
+  const finishes = bestLevelRuns.map((x) => x.pp.finish_position).filter((f): f is number => f !== null);
+  let bestLevelQuality: RaceLevelGap["bestLevelQuality"] = "unknown";
+  if (margins.length > 0) {
+    const bestMargin = Math.min(...margins);
+    bestLevelQuality = bestMargin <= 0 ? "won" : bestMargin <= 0.5 ? "competitive" : "beaten";
+  } else if (finishes.length > 0) {
+    const bestFinish = Math.min(...finishes);
+    bestLevelQuality = bestFinish <= 3 ? "competitive" : "beaten";
+  }
+  return {
+    gapPoints: today.tierPoints - provenTierPoints,
+    provenTierLabel,
+    todayTierLabel: today.label,
+    firstTimeVsOlder: today.ageOpen && !provenAgeOpen,
+    bestLevelQuality,
+  };
+}
+
+const LEVEL_QUALITY_LABEL: Record<RaceLevelGap["bestLevelQuality"], string> = {
+  won: "証明済みクラスは勝利",
+  competitive: "証明済みクラスは僅差(0.5秒以内)",
+  beaten: "証明済みクラスでも大敗",
+  unknown: "戦績不明",
+};
+
+function formatLevelGapNote(gap: RaceLevelGap): string {
+  const parts = [
+    `${gap.gapPoints >= 0 ? "+" : ""}${gap.gapPoints}`,
+    `証明済み${gap.provenTierLabel}→今回${gap.todayTierLabel}`,
+  ];
+  if (gap.firstTimeVsOlder) parts.push("古馬混合戦は今回が初");
+  parts.push(LEVEL_QUALITY_LABEL[gap.bestLevelQuality]);
+  return `[レベル差: ${parts.join("・")}]`;
+}
+
+// 全レース・全出走馬のhorse_rank_commentにレベルギャップを付記する。annotateBiasFitScoresと
+// 同じく表示のみで買い目には影響しない(2026-08-19)。今回のクラス・古馬混合有無が判定できない
+// (races.race_classもgradeも無い異常系)場合はスキップする。
+function annotateRaceLevelGaps(input: RaceDiagnosisInput, result: DiagnosisResult): DiagnosisResult {
+  let annotatedAny = false;
+  const entries = result.entries.map((entry) => {
+    const diagnosisEntry = input.entries.find((e) => e.entry.horse_number === entry.horse_number);
+    if (!diagnosisEntry) return entry;
+    const gap = computeRaceLevelGap(diagnosisEntry, input.race);
+    if (!gap) return entry;
+    annotatedAny = true;
+    return { ...entry, horse_rank_comment: `${formatLevelGapNote(gap)} ${entry.horse_rank_comment}` };
+  });
+  if (!annotatedAny) return result;
+  return { ...result, entries };
+}
+
 // 馬連はワイドよりオッズが高くなりやすい=的中率が低いため、馬連への配分を大きくしすぎない
 // (2026-08-02、ユーザー指摘: 「馬連はほぼ当たらないので500円でほぼ固定、残りはワイドに」という
 // 指示が過去にあったが、prompts.tsには「払戻額を揃える」という別の計算方式しか反映されておらず、
@@ -834,14 +977,17 @@ async function persistDiagnosis(
   biasReferenceRaceId: string | null,
   tier: UsageLogTier,
 ): Promise<void> {
-  const result = annotateBiasFitScores(
+  const result = annotateRaceLevelGaps(
     input,
-    applyFixedBetSplit(
-      enforceRaceViabilityGuard(
-        input,
-        enforcePopularityGuard(
+    annotateBiasFitScores(
+      input,
+      applyFixedBetSplit(
+        enforceRaceViabilityGuard(
           input,
-          enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
+          enforcePopularityGuard(
+            input,
+            enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
+          ),
         ),
       ),
     ),
