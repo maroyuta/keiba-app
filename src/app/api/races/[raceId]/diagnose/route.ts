@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { screenRace, diagnoseRaceStandard, diagnoseRacePremium, DiagnosisParseError } from "@/lib/claude/predict";
 import type { UsageInfo } from "@/lib/claude/predict";
-import { inferRunningStyle } from "@/lib/claude/prompts";
 import type {
   RaceDiagnosisInput,
   DiagnosisResult,
@@ -262,25 +261,71 @@ function enforceClassUpGuard(
 // 見てから全レースへ広げるかを判断する方針(2026-08-16、ユーザー判断)。
 // predicted_bias_style/confidenceはLLMの新しい構造化出力(2026-08-16追加)で、旧レスポンス互換の
 // ため欠落もありうる。値が無い(=front以外)場合はこのガードを発動させない(fail-safe)。
-function getTypicalRunningStyle(entry: EntryDiagnosisInput): string | null {
-  const recentStyles = entry.pastPerformances
+//
+// 脚質のバイアス適合度を-100〜+100の連続値で機械計算する(2026-08-19、ユーザー要望:
+// 「バイアス逆行の好走」のような曖昧な言葉ではなく数値で判断したい)。
+// 「追込か差しか」という二値判定ではなく直近走の位置取り比率をそのまま使うため、
+// 追込ほど強く・差しはやや弱く、というグラデーションが自然に出る。LLMには一切判断させず、
+// corner_positions(客観データ)とLLM自身が既に出力したpredicted_bias_style/confidenceのみから
+// コード側で決定論的に計算する(曖昧さの入り込む余地がない)。
+function getTypicalPositionRatio(entry: EntryDiagnosisInput): number | null {
+  const ratios = entry.pastPerformances
     .filter((pp) => !!pp.corner_positions && !!pp.entry_count)
-    .slice(0, 3) // pastPerformancesはrace_date降順で取得済みの前提(直近が先頭)
-    .map((pp) => inferRunningStyle(pp.corner_positions, pp.entry_count))
-    .filter((style): style is string => style !== null);
-  if (recentStyles.length === 0) return null;
-  const counts = new Map<string, number>();
-  for (const style of recentStyles) counts.set(style, (counts.get(style) ?? 0) + 1);
-  let mostCommon: string | null = null;
-  let mostCommonCount = 0;
-  for (const [style, count] of counts) {
-    if (count > mostCommonCount) {
-      mostCommon = style;
-      mostCommonCount = count;
-    }
-  }
-  return mostCommon;
+    .slice(0, 3) // 直近3走(pastPerformancesはrace_date降順で取得済み)
+    .map((pp) => {
+      const positions = (pp.corner_positions ?? "")
+        .split(/[-–]/)
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (positions.length === 0) return null;
+      const early = positions.slice(0, 2);
+      const earlyAvg = early.reduce((a, b) => a + b, 0) / early.length;
+      return earlyAvg / (pp.entry_count ?? 14);
+    })
+    .filter((r): r is number => r !== null);
+  if (ratios.length === 0) return null;
+  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
 }
+
+const BIAS_CONFIDENCE_WEIGHT: Record<string, number> = { high: 1.0, medium: 0.65, low: 0.35 };
+
+// +100(最先行寄り)〜-100(最後方寄り)のforwardnessに、バイアス方向(front/back)と確信度の重みを
+// かけたもの。predicted_bias_styleがflat/未出力ならバイアス自体が無いので常に0(適合も逆行もしない)。
+function computeBiasFitScore(
+  entry: EntryDiagnosisInput,
+  biasStyle: DiagnosisResult["predicted_bias_style"],
+  biasConfidence: DiagnosisResult["predicted_bias_confidence"],
+): number | null {
+  if (!biasStyle || biasStyle === "flat") return 0;
+  const ratio = getTypicalPositionRatio(entry);
+  if (ratio === null) return null; // 過去走データ不足で判定不能(=0ではなくnull、既知データ欠損と区別)
+  const forwardness = (0.5 - ratio) * 200;
+  const direction = biasStyle === "front" ? 1 : -1;
+  const weight = BIAS_CONFIDENCE_WEIGHT[biasConfidence ?? "low"] ?? 0.35;
+  return Math.round(forwardness * direction * weight);
+}
+
+// 全レース・全出走馬のhorse_rank_commentに適合度スコアを付記する(2026-08-19)。「バイアス逆行の
+// 好走=地力上位の証」のような自由文の解釈に委ねず、数字を毎回目に見える形で出すことで曖昧な判断を
+// 減らす狙い。ガードの発動有無に関わらず全レースに適用(表示のみで買い目には影響しない)。
+function annotateBiasFitScores(input: RaceDiagnosisInput, result: DiagnosisResult): DiagnosisResult {
+  if (!result.predicted_bias_style || result.predicted_bias_style === "flat") return result;
+  let annotatedAny = false;
+  const entries = result.entries.map((entry) => {
+    const diagnosisEntry = input.entries.find((e) => e.entry.horse_number === entry.horse_number);
+    if (!diagnosisEntry) return entry;
+    const score = computeBiasFitScore(diagnosisEntry, result.predicted_bias_style, result.predicted_bias_confidence);
+    if (score === null) return entry;
+    annotatedAny = true;
+    return { ...entry, horse_rank_comment: `[脚質×バイアス適合度: ${score >= 0 ? "+" : ""}${score}] ${entry.horse_rank_comment}` };
+  });
+  if (!annotatedAny) return result;
+  return { ...result, entries };
+}
+
+// バイアス適合度スコアがこの値以下(=強いミスマッチ)なら重賞ガードの対象とする。追込(高確信度時の
+// forwardness最大-100付近)がここに入り、境界付近の差しは入らない程度の閾値(2026-08-19確定)。
+const GRADED_CLOSER_GUARD_THRESHOLD = -40;
 
 function enforceGradedCloserGuard(
   input: RaceDiagnosisInput,
@@ -289,19 +334,23 @@ function enforceGradedCloserGuard(
   if (!input.race.grade) return result; // 重賞限定
   if (result.predicted_bias_style !== "front") return result; // 前有利確定時のみ発動
 
-  const isTypicalCloser = (horseNumber: number | null): boolean => {
-    if (horseNumber === null) return false;
+  const scoreOf = (horseNumber: number | null): number | null => {
+    if (horseNumber === null) return null;
     const entry = input.entries.find((e) => e.entry.horse_number === horseNumber);
-    if (!entry) return false;
-    return getTypicalRunningStyle(entry) === "追込";
+    if (!entry) return null;
+    return computeBiasFitScore(entry, result.predicted_bias_style, result.predicted_bias_confidence);
+  };
+  const isStrongMismatch = (horseNumber: number | null): boolean => {
+    const score = scoreOf(horseNumber);
+    return score !== null && score <= GRADED_CLOSER_GUARD_THRESHOLD;
   };
 
   let updated = result;
   const notes: string[] = [];
 
-  // aite(1人目)が常用追込なら、本命込みで買い目全体を見送りにする(class-up guardと同じ設計)。
-  if (updated.aite_horse_number !== null && isTypicalCloser(updated.aite_horse_number)) {
-    notes.push(`相手${updated.aite_horse_number}番`);
+  // aite(1人目)が強いミスマッチなら、本命込みで買い目全体を見送りにする(class-up guardと同じ設計)。
+  if (updated.aite_horse_number !== null && isStrongMismatch(updated.aite_horse_number)) {
+    notes.push(`相手${updated.aite_horse_number}番(適合度${scoreOf(updated.aite_horse_number)})`);
     updated = {
       ...updated,
       honmei_horse_number: null,
@@ -315,19 +364,19 @@ function enforceGradedCloserGuard(
     };
   }
 
-  if (updated.aite_horse_number_2 !== null && isTypicalCloser(updated.aite_horse_number_2)) {
-    notes.push(`相手2 ${updated.aite_horse_number_2}番`);
+  if (updated.aite_horse_number_2 !== null && isStrongMismatch(updated.aite_horse_number_2)) {
+    notes.push(`相手2 ${updated.aite_horse_number_2}番(適合度${scoreOf(updated.aite_horse_number_2)})`);
     updated = { ...updated, aite_horse_number_2: null, bet_amount_wide_2: null, bet_amount_umaren_2: null };
   }
 
   if (notes.length === 0) return updated;
 
   console.warn(
-    `[graded-closer-guard] race ${notes.join("、")}が常用追込×前有利バイアスのため機械的に見送りへ変更`,
+    `[graded-closer-guard] race ${notes.join("、")}がバイアス適合度${GRADED_CLOSER_GUARD_THRESHOLD}以下×前有利バイアスのため機械的に見送りへ変更`,
   );
   return {
     ...updated,
-    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${notes.join("、")}は常用脚質が追込で、今回は前有利バイアス(確信度${result.predicted_bias_confidence ?? "不明"})のため、重賞限定ガードにより機械的に見送りへ変更した。`,
+    race_rank_reason: `${updated.race_rank_reason}\n[自動チェック] ${notes.join("、")}は脚質×バイアス適合度が${GRADED_CLOSER_GUARD_THRESHOLD}以下(確信度${result.predicted_bias_confidence ?? "不明"})のため、重賞限定ガードにより機械的に見送りへ変更した。`,
   };
 }
 
@@ -785,12 +834,15 @@ async function persistDiagnosis(
   biasReferenceRaceId: string | null,
   tier: UsageLogTier,
 ): Promise<void> {
-  const result = applyFixedBetSplit(
-    enforceRaceViabilityGuard(
-      input,
-      enforcePopularityGuard(
+  const result = annotateBiasFitScores(
+    input,
+    applyFixedBetSplit(
+      enforceRaceViabilityGuard(
         input,
-        enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
+        enforcePopularityGuard(
+          input,
+          enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
+        ),
       ),
     ),
   );
