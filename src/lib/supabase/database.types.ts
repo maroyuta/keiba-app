@@ -975,6 +975,9 @@ export type Database = {
           race_date: string
           race_name: string | null
           race_number: number
+          bet_expected_value: number | null
+          estimated_place_probability: number | null
+          market_implied_probability: number | null
           race_priority_score: number | null
           race_rank: string | null
           race_rank_reason: string | null
@@ -1020,6 +1023,9 @@ export type Database = {
           race_date: string
           race_name?: string | null
           race_number: number
+          bet_expected_value?: number | null
+          estimated_place_probability?: number | null
+          market_implied_probability?: number | null
           race_priority_score?: number | null
           race_rank?: string | null
           race_rank_reason?: string | null
@@ -1065,6 +1071,9 @@ export type Database = {
           race_date?: string
           race_name?: string | null
           race_number?: number
+          bet_expected_value?: number | null
+          estimated_place_probability?: number | null
+          market_implied_probability?: number | null
           race_priority_score?: number | null
           race_rank?: string | null
           race_rank_reason?: string | null

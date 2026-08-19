@@ -9,8 +9,13 @@ import type {
 } from "@/lib/claude/prompts";
 import type { RaceRow, UsageLogTier } from "@/lib/supabase/database.types";
 import { capDailySRank, capDailyBuyCandidates } from "@/lib/rank/capDailySRank";
-import { computeBiasFitScore, computeRaceLevelGap } from "@/lib/rank/fitScores";
-import type { RaceLevelGap } from "@/lib/rank/fitScores";
+import {
+  computeBiasFitScore,
+  computeRaceLevelGap,
+  computeBetExpectedValue,
+  expectedValueToPriorityScore,
+} from "@/lib/rank/fitScores";
+import type { RaceLevelGap, BetExpectedValue } from "@/lib/rank/fitScores";
 
 // Sonnet(standard)は数十秒、Opus(premium, xhigh effort)は実測で約200秒かかることを確認済み。
 // Vercel Hobbyプランはmaxduraiton上限が60秒で固定 (この値を超えて指定しても60秒でハードタイムアウトする)。
@@ -390,6 +395,82 @@ function annotateRaceLevelGaps(input: RaceDiagnosisInput, result: DiagnosisResul
   });
   if (!annotatedAny) return result;
   return { ...result, entries };
+}
+
+// 本命×相手の組み合わせに対応する実際のワイドオッズ(下限)を引く。
+// 組み合わせは race_payouts / race_odds_combinations と同じ「小さい馬番-大きい馬番」形式。
+function findWideOddsLow(input: RaceDiagnosisInput, a: number | null, b: number | null): number | null {
+  if (a === null || b === null) return null;
+  const combination = a < b ? `${a}-${b}` : `${b}-${a}`;
+  const row = input.oddsCombinations.find(
+    (c) => c.bet_type === "wide" && c.combination === combination,
+  );
+  return row?.odds_low ?? null;
+}
+
+// EVが明確にマイナスの買い目だけを機械的に見送る閾値。
+// 初回運用のため、まずは「明確に損」なものだけを弾く緩い設定にしている。LLMの確率推定が
+// 較正されているかはまだ未検証(=閾値を1.0にすると、過信で全部通るか全部落ちるかのどちらかに
+// 振れて何も学べない)。実績が溜まってキャリブレーションを測ってから締める。
+const MIN_EXPECTED_VALUE = 0.9;
+
+// LLMが出した推定確率と実際のワイドオッズからEVを計算し、
+//   (1) 明確にEVマイナスの買い目を見送りへ差し戻す
+//   (2) race_priority_scoreを「LLMの自己申告」から「実際の期待値」由来の値へ置き換える
+// を行う。(2)が重要: capDailySRank/capDailyBuyCandidatesはrace_priority_score順で
+// 「今日買う4〜6レース」を選ぶが、実測でこのスコアは回収率とほぼ無相関だった
+// (60未満=ROI94.3% / 60-69=66.0% / 70-79=89.5%、n=450)。予測力が確認できていない
+// 自己申告値ではなく、実オッズに基づく期待値で買うレースを選ぶ。
+function applyExpectedValueGate(
+  input: RaceDiagnosisInput,
+  result: DiagnosisResult,
+): { result: DiagnosisResult; ev: BetExpectedValue | null } {
+  if (result.honmei_horse_number === null || result.aite_horse_number === null) {
+    return { result, ev: null };
+  }
+  const wideOddsLow = findWideOddsLow(input, result.honmei_horse_number, result.aite_horse_number);
+  const ev = computeBetExpectedValue(result.honmei_aite_place_probability, wideOddsLow);
+  if (!ev) {
+    // 組み合わせオッズ未取得、またはLLMが確率を出さなかった場合は判定不能。
+    // ここで見送りにはせず、従来通りLLMの判断を通す(fail-safeにすると
+    // オッズ未取得の週末が全件見送りになるため)。
+    return { result, ev: null };
+  }
+
+  const priorityScore = expectedValueToPriorityScore(ev.expectedValue);
+  const evNote =
+    `[期待値] 推定複勝圏確率${ev.estimatedProbability}% × ワイド${ev.wideOddsUsed}倍 = EV ${ev.expectedValue}` +
+    ` (損益分岐${ev.breakEvenProbability}%・市場想定${ev.marketImpliedProbability}%、` +
+    `エッジ${ev.edgePoints >= 0 ? "+" : ""}${ev.edgePoints}pt)`;
+
+  if (ev.expectedValue < MIN_EXPECTED_VALUE) {
+    console.warn(`[ev-gate] EV ${ev.expectedValue} < ${MIN_EXPECTED_VALUE} のため見送りへ変更`);
+    return {
+      result: {
+        ...result,
+        race_priority_score: priorityScore,
+        honmei_horse_number: null,
+        aite_horse_number: null,
+        aite_horse_number_2: null,
+        bet_type: null,
+        bet_amount_wide: null,
+        bet_amount_umaren: null,
+        bet_amount_wide_2: null,
+        bet_amount_umaren_2: null,
+        race_rank_reason: `${result.race_rank_reason}\n${evNote} → 期待値が${MIN_EXPECTED_VALUE}未満のため機械的に見送りへ変更した。`,
+      },
+      ev,
+    };
+  }
+
+  return {
+    result: {
+      ...result,
+      race_priority_score: priorityScore,
+      race_rank_reason: `${result.race_rank_reason}\n${evNote}`,
+    },
+    ev,
+  };
 }
 
 // 馬連はワイドよりオッズが高くなりやすい=的中率が低いため、馬連への配分を大きくしすぎない
@@ -846,27 +927,32 @@ async function persistDiagnosis(
   biasReferenceRaceId: string | null,
   tier: UsageLogTier,
 ): Promise<void> {
-  const result = annotateRaceLevelGaps(
+  const gated = applyExpectedValueGate(
     input,
-    annotateBiasFitScores(
+    enforceRaceViabilityGuard(
       input,
-      applyFixedBetSplit(
-        enforceRaceViabilityGuard(
-          input,
-          enforcePopularityGuard(
-            input,
-            enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
-          ),
-        ),
+      enforcePopularityGuard(
+        input,
+        enforceGradedCloserGuard(input, enforceClassUpGuard(input, rawResult)),
       ),
     ),
   );
+  const result = annotateRaceLevelGaps(
+    input,
+    annotateBiasFitScores(input, applyFixedBetSplit(gated.result)),
+  );
+  const ev = gated.ev;
   await supabase
     .from("races")
     .update({
       race_rank: result.race_rank,
       race_rank_reason: result.race_rank_reason,
       race_priority_score: result.race_priority_score,
+      // キャリブレーション検証用(2026-08-19)。「推定25%の買い目が実際に25%当たったか」を
+      // race_recommendation_results.is_hitと突き合わせて後から測るために保存する。
+      estimated_place_probability: ev?.estimatedProbability ?? null,
+      market_implied_probability: ev?.marketImpliedProbability ?? null,
+      bet_expected_value: ev?.expectedValue ?? null,
       // 「本気診断できてるか自分で判断つかない」への対応(2026-07-19)。premiumが実際に
       // 完走・コミットされた時刻を記録し、UIの済バッジ表示に使う。
       ...(tier === "premium" ? { premium_diagnosed_at: new Date().toISOString() } : {}),
