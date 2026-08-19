@@ -15,6 +15,8 @@ import type {
   RaceRank,
   RaceOddsCombinationRow,
 } from "@/lib/supabase/database.types";
+import { computeEntryFitScores, computeFieldContext } from "@/lib/rank/fitScores";
+import type { EntryFitScores } from "@/lib/rank/fitScores";
 
 export interface EntryDiagnosisInput {
   entry: RaceEntryRow;
@@ -398,17 +400,11 @@ predicted_biasと噛み合わない(不利側の脚質・枠になる)なら、�
   - **バイアス逆行・不利を受けてなお好走した馬(＝補正した地力が上)は、着順や人気が下でも本命候補に上げる。**
     (実例: 青函S=内前有利の馬場を、ブラックチャリスは内前で1着・ナムラクララは外を回して差しタイム差なし着差なしの2着。
      補正した地力はナムラクララ≧ブラックチャリス。着順・人気でなく"中身"で上を選ぶ。)
-  - **★「バイアス逆行の好走＝地力上位の証」ラベルは、その馬が今回と同等以上のレベル・相手層(古馬混合戦・重賞・
-    今回のペース級)で実際に走った実績がある場合にのみ使うこと(2026-08-16、ナムラコスモス事故の是正)。** 世代限定
-    (2歳・3歳・牝限定等)や格下条件でしか走ったことがない馬が、その狭い母集団の中で見せた「バイアス逆行の好走」は
-    地力の証明にはならない——単に相手層が弱かっただけか、今回のレベル・相手・ペースで通用するかは実証されていない
-    "未知数"に過ぎない。この場合は「地力上位の証」ではなく「経験不足・未知数」と評価し、本命はもちろん、相手(aite)・
-    S評価の根拠としても採用しないこと。**この制約は本命に限らず、下記の相手(aite)選定・妙味判定にも同様に適用する**
-    (相手の妙味は「証明済みの実力を市場が見落としている」場合にのみ成立し、「まだ試されていない期待」は妙味ではなく
-    ただの賭けであるため)。
-    (実例: 2026-08-16中京記念のナムラコスモス。こぶし賞1勝クラス・チューリップ賞GIIでの好走は全て3歳牝馬限定戦
-     での実績で、古馬混合戦は今回が初挑戦。「こぶし賞でバイアス逆行の好走=地力上位の証」としてS評価・相手に採用
-     したが、初めて経験するペース・相手層で通用するかは未証明のまま買い、15着大敗。)
+  - **★「バイアス逆行の好走＝地力上位の証」ラベルは、今回と同等以上のレベル・相手層で実際に走った実績が
+    ある馬にのみ使うこと。判定は\`fit_scores.level_gap\`で機械的に行う(FIT_SCORE_RULES参照)。**
+    \`first_time_vs_older\`がtrue、または\`gap_points\`が大きくプラスの馬は、世代限定戦・格下条件で
+    どれだけ好走していても「地力上位の証」ではなく「未知数」と評価し、本命・相手・S評価のいずれの
+    根拠にもしないこと。**この制約は本命・相手・妙味判定のすべてに等しく適用される。**
   市場人気は「地力がほぼ互角の複数候補から絞る最後の材料」「極端な人気薄(10番人気以下)を軸にしない歯止め」としては使うが、
   "1番人気だから本命"という選び方はしない。上位人気から動かす根拠は必ずこの補正地力(3軸)の事実であり、弱いシグナルでの逆張りはしない。
 - 1番人気だからと安易に固定しない。2番人気以下の対抗馬とも着内率・展開適性を必ず比較検討してから決めること
@@ -452,37 +448,24 @@ predicted_biasと噛み合わない(不利側の脚質・枠になる)なら、�
 - **★相手選定こそ「危険/妙味の区別」(研究ルール参照)を適用する場面。** 悪着順が馬場違い・本領外距離・展開/位置取り不利で
   説明でき、かつ同条件では実力を示している馬は、"消し"ではなく**むしろ最良の相手(妙味)**であることが多い。最悪着順の
   寄せ集めで実力馬を"危険"と切り捨てないこと。
-- **★ただし「妙味の最大化」は無条件の免罪符ではない(2026-08-16、ユーザー指摘: 前有利バイアスなのに追込馬を相手に
-  据える事故が継続)。次の2点は相手選定でも一切の例外なく適用すること:**
-  (1) **予想バイアスが前有利(確信度中以上)の時、常用脚質が差し・追込の候補は、上記「差し馬の弱さの正体はフロック」
-  節の手順(前走の位置取りが常用より明確に前だったか)を必ず経由する。** 「バイアス逆行の好走」を1本挙げただけで
-  採用せず、その好走が再現性のある地力(普段の位置取りのまま好走できている)か、たまたま前に行けた一過性のもの
-  かを必ず確認する。特に追込(常用でも最後方)は差し以上に慎重に扱う。
-  (2) **「地力上位の証」ラベルは、今回と同等以上のレベル・相手層で実際に走った実績がある馬にのみ使う**
-  (上記「本命」節のナムラコスモス事故の是正を相手選定にも同様に適用。世代限定・格下条件でしか実証していない
-  「バイアス逆行の好走」は妙味の根拠にしない)。
-  この2点を満たさない馬は、一見妙味があるように見えても実際は"まだ試されていない賭け"であり本物の妙味ではない。
+- **★ただし「妙味の最大化」は無条件の免罪符ではない。相手選定でも次の2点を例外なく適用すること:**
+  (1) **\`fit_scores.bias_fit\`が大きくマイナスの馬(=今回のバイアスに逆行する脚質)を相手に据えない。**
+  「バイアス逆行の好走」を1本挙げただけで採用せず、その好走が再現性のある地力か、たまたま前に行けた
+  一過性のもの(=フロック)かを必ず確認する。
+  (2) **\`level_gap\`が未証明を示す馬(first_time_vs_older=true 等)を妙味の根拠にしない**(上記「本命」節と同一基準)。
+  この2点を満たさない馬は、一見妙味があるように見えても"まだ試されていない賭け"であり本物の妙味ではない。
   他に妥当な相手候補が見当たらない場合は、無理に据えずhonmei単体保有・見送りを検討すること。
 - 「相手は良いが本命が来ない」を避けるのが狙い。軸は上の"堅さの根拠"を満たす市場上位馬にし、攻めの妙味は相手に寄せる。
 
-**⚠️2026-07-13のバックテスト(66レース中27レースで実際に購入)で判明した重要な知見: 軸の実際の
-複勝率は51.9%(平均1.7番人気)で、同じデータセット内の1〜2番人気の素朴なベースライン複勝率56.1%を
-下回っていた。さらに2026-08-09に直近25レース(7/26・8/1・8/2・8/8)で再検証したところ、本命複勝率48%(12/25)が
-「1番人気ベタ買い」64%(16/25)を16ポイント下回り、特にダートは36%(5/14)まで落ちていた。ただしこれは
-"1番人気に固めれば直る"という意味ではない(1番人気自体がバイアス恩恵・世代限定で脆いことも多い)。真因は、
-弱いシグナルで額面着順を信じて上位人気から動く/または脆い人気馬を額面で軸にする、の両方。**動かす時も固定する時も
-判断根拠は"補正した地力"であるべきで、人気の数字そのものを軸選定の理由にしないこと。** つまり現状のロジックは、バイアス・展開等の調整を加えたことで、単純に人気上位馬を
-買うより悪い結果になっていた可能性がある。**絶対能力(≒市場が織り込んだ人気・オッズ)を最優先の
-判断材料として扱い、軸を上位人気から動かすのは「軸馬評価の参考ヒント」に複数かつ強く該当する、
-明確な根拠がある場合に限定すること。** 1つの弱いシグナル(乗り替わり・馬体重変動等)だけで
-上位人気馬を軸から外さない。目安として軸は1〜3番人気から選ぶことを基本とし、4番人気以下を軸に
-据える場合は、そのレースの中で相対的に「実質的な複勝率」が明確に高いと言える具体的根拠を
-race_rank_reasonまたはhorse_rank_commentに明記すること。
-**★上の「比重の序列」との整合(2026-08-08): このブレーキは『市場評価(人気・オッズ)を最優先の
-基盤にする』という意味であって、バイアス適性を過去の着順・戦績より上位に置く序列と矛盾しない。
-戦績(過去の勝ち鞍・好走歴)は市場評価そのものではないので、バイアスがそれを上書きしてよい。
-一方、市場が既にその馬を上位人気にしている(=絶対能力を織り込んでいる)場合は、バイアス不利を
-理由に軸から外すには、上記の通り明確な根拠を要する。**
+**⚠️実測: 本命の複勝率は「1番人気ベタ買い」を下回っていた(2026-07-13 n=27で51.9% vs 56.1%、
+2026-08-09 n=25で48% vs 64%、特にダートは36%)。** ただし"1番人気に固めれば直る"という意味ではない
+(1番人気自体がバイアス恩恵・世代限定で脆いことも多い)。真因は「弱いシグナルで上位人気から動く」と
+「脆い人気馬を額面で軸にする」の両方。**動かす時も固定する時も、判断根拠は人気の数字そのものではなく
+"補正した地力"であること。** 1つの弱いシグナル(乗り替わり・馬体重変動等)だけで上位人気馬を軸から
+外さない。目安として軸は1〜3番人気を基本とし、4番人気以下を軸に据える場合は「実質的な複勝率が
+明確に高い」と言える具体的根拠をrace_rank_reasonまたはhorse_rank_commentに明記すること。
+なお、市場が既に上位人気にしている馬(=絶対能力を織り込み済み)をバイアス不利だけを理由に軸から
+外すには明確な根拠を要する。一方、単なる過去の戦績はバイアス適性が上書きしてよい(「比重の序列」参照)。
 
 **軸馬評価の参考ヒント(絶対ルールではなく判断材料の一つ):** 「人気馬が走らない」パターンでよく見られる
 傾向。機械的なスコアリングや自動格下げのルールとして使うのではなく、三本柱評価(能力・ペース/位置取り・
@@ -773,6 +756,42 @@ const PEDIGREE_TRAINING_RULES = `## 血統・調教データの扱い
   補助材料に使うが、乗り替わりで結果が変わりうるため、馬自身の絶対能力・展開適性を覆す根拠には
   しないこと。starts件数が少ない(目安10未満)統計は参考程度に留める(sire_stats/nick_statsと同じ方針)`;
 
+const FIT_SCORE_RULES = `## 適性スコア(fit_scores)の読み方 ★最優先で参照する客観データ
+
+各馬の\`fit_scores\`と、レース全体の\`field_context\`は、**コード側が過去走データから決定論的に
+計算した客観数値**であり、あなたの主観判断より優先される一次情報である。「脚質が向いてそう」
+「格上挑戦だから危なそう」といった曖昧な言語判断をやり直さず、まずこの数値を読むこと。
+
+**符号の統一: すべて -100〜+100 で、プラス=今回有利・マイナス=今回不利。**
+**nullは「不利」ではなく「判定に必要なデータが無い」という意味。** nullを不利側に読み替えないこと。
+逆に、データが無いことを「中立=問題なし」と好意的に解釈するのも禁止(信頼度を下げる要因として扱う)。
+
+- \`bias_fit\`: 常用脚質 × コースの構造的バイアス。前有利のコースで先行する馬ほどプラス。
+- \`draw_fit\`: 今回の枠番 × そのコースの内外バイアス。
+- \`position_ease\`: **今回のメンバー構成の中で、望むポジションを取れるか。** 先行馬は同型が
+  少ないほどプラス、追込馬は前が飽和してペースが速くなるほどプラス(展開が向く)。
+  bias_fit(馬場がどちらに向くか)とは独立した別軸なので、必ず両方を見ること。
+- \`projected_position_rank\`: 想定隊列で前から何番目に位置しそうか(1=先頭)。
+- \`aptitude.{distance,surface,venue,going}\`: その条件での過去の走りぶり。
+  \`score\`は頭数で正規化した着順パフォーマンス(+100=常に勝つ、0=中位、-100=常に最下位)、
+  \`starts\`はその条件の経験本数。**startsが1〜2本しかないscoreは信頼度が低いので過信しないこと。**
+  「その条件を走った経験がある」こと自体は評価材料にせず、scoreの中身で判断する。
+- \`level_gap\`: 今回のクラスと、その馬が**実際に通用したクラス**との差。
+  - \`gap_points\`がプラスほど格上挑戦(+20以上は明確な格上挑戦、+50以上は大幅な挑戦)。
+  - \`proven_effective_points\`は「出走しただけ」ではなく着順を補正した実効レベル。
+    重賞で大敗した馬は、そのクラスを走った実績として評価されない。
+  - \`first_time_vs_older\`がtrueなら、**今回が古馬混合戦の初挑戦**(過去は世代限定戦のみ)。
+    この場合、世代限定戦でどれだけ好走していても「地力を証明済み」とは扱わない。相手(aite)・
+    S評価の根拠にしないこと(妙味は「証明済みの実力の market の見落とし」でのみ成立し、
+    「まだ試されていない期待」は妙味ではなく単なる賭けであるため)。
+- \`field_context.pace_label\`: 先行勢の密度から機械推定した想定ペース(S/M/H)。
+  \`front_runner_count\`が多いほど前は消耗戦になる。展開予想(analysis_pace)はこの数値と
+  矛盾しないように書くこと。
+
+**スコアは総合判断の材料であり、単独で自動的に買い/消しを決めるものではない。** ただし、
+自分の結論がスコアと逆向きになる場合は、なぜスコアを覆すのかをhorse_rank_commentに具体的な
+事実(着差・通過順・同条件実績)で明記すること。「印象」で覆さないこと。`;
+
 const RACE_RANK_RULES = `## レース投資判断
 
 診断表作成前に、レース自体をS/A/B/Cで評価する (race_rank)。個別馬のランクとは別軸。
@@ -911,6 +930,7 @@ const OUTPUT_FORMAT_RULES = `## 出力形式
 export const STANDARD_SYSTEM_PROMPT = [
   PHILOSOPHY_RULES,
   CORE_RULES,
+  FIT_SCORE_RULES,
   RACE_RANK_RULES,
   CRITERIA_SUGGESTION_RULES,
   OUTPUT_FORMAT_RULES,
@@ -920,6 +940,7 @@ export const STANDARD_SYSTEM_PROMPT = [
 export const PREMIUM_SYSTEM_PROMPT = [
   PHILOSOPHY_RULES,
   CORE_RULES,
+  FIT_SCORE_RULES,
   PEDIGREE_TRAINING_RULES,
   RACE_RANK_RULES,
   CRITERIA_SUGGESTION_RULES,
@@ -1258,7 +1279,11 @@ export function estimatePopularityFromCombos(
   return out;
 }
 
-function serializeEntry(input: EntryDiagnosisInput, estimatedPopularityFromCombos: number | null = null) {
+function serializeEntry(
+  input: EntryDiagnosisInput,
+  estimatedPopularityFromCombos: number | null = null,
+  fitScores: EntryFitScores | null = null,
+) {
   return {
     post_position: input.entry.post_position,
     horse_number: input.entry.horse_number,
@@ -1275,6 +1300,8 @@ function serializeEntry(input: EntryDiagnosisInput, estimatedPopularityFromCombo
     // expected_popularityがある時はそちらが正、無い時のみこの推定値を市場序列として使う。
     estimated_popularity_from_combos: estimatedPopularityFromCombos,
     heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
+    // コード側で決定論的に算出した適性スコア群(2026-08-19)。詳細な読み方はFIT_SCORE_RULES参照。
+    fit_scores: fitScores,
     past_performance_count: input.pastPerformances.length, // ★過去走の総件数。0〜1なら「データ不足・評価不能」を短評冒頭に明記すること(空配列の見落とし防止、2026-08-08)
     past_performances: input.pastPerformances.map(serializePastPerformance),
     pedigree: serializePedigree(input.pedigree),
@@ -1316,9 +1343,13 @@ export function buildRaceDataPayload(input: RaceDiagnosisInput): string {
     })),
     course_bias_profile: serializeCourseBiasProfile(input.courseBiasProfile),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
+    // メンバー構成から機械推定した想定隊列・ペース(2026-08-19)。個別馬のposition_easeはこれが前提。
+    field_context: computeFieldContext(input),
     entries: (() => {
       const estMap = estimatePopularityFromCombos(input.entries, input.oddsCombinations);
-      return input.entries.map((e) => serializeEntry(e, estMap.get(e.entry.horse_number) ?? null));
+      return input.entries.map((e) =>
+        serializeEntry(e, estMap.get(e.entry.horse_number) ?? null, computeEntryFitScores(e, input)),
+      );
     })(),
     odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
   };
@@ -1356,7 +1387,11 @@ export function buildScreeningPayload(input: RaceDiagnosisInput): string {
 // (2026-08-08、ユーザー判断)。
 const STANDARD_PAST_PERFORMANCE_LIMIT = 5;
 
-function serializeStandardEntry(input: EntryDiagnosisInput, estimatedPopularityFromCombos: number | null = null) {
+function serializeStandardEntry(
+  input: EntryDiagnosisInput,
+  estimatedPopularityFromCombos: number | null = null,
+  fitScores: EntryFitScores | null = null,
+) {
   return {
     post_position: input.entry.post_position,
     horse_number: input.entry.horse_number,
@@ -1372,6 +1407,8 @@ function serializeStandardEntry(input: EntryDiagnosisInput, estimatedPopularityF
     // 単勝オッズ未取得時のフォールバック市場人気(ワイド/馬連組合せから機械算出、2026-08-09)。
     estimated_popularity_from_combos: estimatedPopularityFromCombos,
     heavy_track_aptitude: computeHeavyTrackAptitude(input.pastPerformances), // 重・不良馬場での複勝率比較(過去走全体から算出、対象は下記past_performancesの表示件数に限らない)
+    // コード側で決定論的に算出した適性スコア群(2026-08-19)。詳細な読み方はFIT_SCORE_RULES参照。
+    fit_scores: fitScores,
     past_performance_count: input.pastPerformances.length, // ★過去走の総件数。0〜1なら「データ不足・評価不能」を短評冒頭に明記すること(空配列の見落とし防止、2026-08-08)
     past_performances: input.pastPerformances
       .slice(0, STANDARD_PAST_PERFORMANCE_LIMIT)
@@ -1390,9 +1427,13 @@ export function buildStandardPayload(input: RaceDiagnosisInput): string {
     })),
     course_bias_profile: serializeCourseBiasProfile(input.courseBiasProfile),
     race_criteria_scores: input.raceCriteriaScores.map(serializeCriteriaScore),
+    // メンバー構成から機械推定した想定隊列・ペース(2026-08-19)。個別馬のposition_easeはこれが前提。
+    field_context: computeFieldContext(input),
     entries: (() => {
       const estMap = estimatePopularityFromCombos(input.entries, input.oddsCombinations);
-      return input.entries.map((e) => serializeStandardEntry(e, estMap.get(e.entry.horse_number) ?? null));
+      return input.entries.map((e) =>
+        serializeStandardEntry(e, estMap.get(e.entry.horse_number) ?? null, computeEntryFitScores(e, input)),
+      );
     })(),
     odds_combinations: input.oddsCombinations.map(serializeOddsCombination),
   };
