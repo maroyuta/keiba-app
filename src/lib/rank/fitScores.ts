@@ -411,6 +411,67 @@ export function courseProfileToBiasStyle(
   return { style, confidence };
 }
 
+// ============================================================
+// 7. 期待値(EV)の算出
+//
+// これまで「妙味(EV)」はプロンプトに106回書かれていたのに、期待値の掛け算をするコードは
+// 1行も無かった(LLMが文章で「過小評価されている」と言うだけで、検算も反証もできなかった)。
+// LLMには「本命と相手が両方3着以内に入る確率(%)」という検証可能な数値だけを出させ、
+// 実際のワイドオッズと突き合わせた期待値の計算は**コード側で行う**。
+//
+// なぜワイドの複勝圏確率を聞くのか: ワイド馬券が払い戻される条件そのものだから。
+// 「確信度70点」のような尺度と違い、後から「25%と言った買い目は本当に25%当たったか」を
+// 実績(race_recommendation_results.is_hit)と突き合わせて検証・較正できる。
+// ============================================================
+
+// JRAのワイド・馬連の控除率は22.5%。つまり市場が完全に効率的でも払戻期待値は0.775にしかならない。
+// 市場の想定確率を逆算する際はこの控除率を戻す必要がある(単純な1/oddsだと控除率のぶん過大になる)。
+export const JRA_TAKEOUT_WIDE = 0.225;
+
+export interface BetExpectedValue {
+  estimatedProbability: number;     // LLM推定(%)
+  marketImpliedProbability: number; // 市場が believe している確率(%) = (1-控除率)/オッズ
+  breakEvenProbability: number;     // 損益分岐に必要な確率(%) = 100/オッズ
+  wideOddsUsed: number;             // 判定に使ったワイドオッズ(下限=最悪ケース)
+  expectedValue: number;            // 推定確率 × オッズ。1.0が損益分岐
+  edgePoints: number;               // 推定確率 - 損益分岐確率(パーセントポイント)。EV>1と符号が一致する
+}
+
+// ワイドは[下限,上限]の範囲で払い戻されるため、**下限(最悪ケース)**で期待値を判定する。
+// 上限で判定すると実際には出ない配当を前提に買うことになり、EVを 系統的に過大評価する。
+export function computeBetExpectedValue(
+  estimatedProbabilityPct: number | null | undefined,
+  wideOddsLow: number | null,
+): BetExpectedValue | null {
+  if (estimatedProbabilityPct === null || estimatedProbabilityPct === undefined) return null;
+  if (wideOddsLow === null || wideOddsLow <= 0) return null;
+  const p = Math.max(0, Math.min(100, estimatedProbabilityPct)) / 100;
+  // 市場が believe している確率。パリミュチュエルでは、ある組み合わせに賭けられた金額の割合が
+  // そのまま市場の予想確率であり、それは (1-控除率)/オッズ になる。
+  const marketImplied = (1 - JRA_TAKEOUT_WIDE) / wideOddsLow;
+  // 損益分岐に必要な確率。市場と同じ見立て(=marketImplied)で買うと、控除率のぶんちょうど負ける
+  // (EV=0.775)。**勝つには市場より 1/(1-控除率) ≒ 1.29倍 正確でなければならない。**
+  // edgePointsはこの損益分岐に対する差分にする(市場想定に対する差分にすると、
+  // 「エッジはプラスなのにEVは1未満」という一見矛盾した表示になり判断を誤らせるため)。
+  const breakEven = 1 / wideOddsLow;
+  return {
+    estimatedProbability: Math.round(p * 1000) / 10,
+    marketImpliedProbability: Math.round(marketImplied * 1000) / 10,
+    breakEvenProbability: Math.round(breakEven * 1000) / 10,
+    wideOddsUsed: wideOddsLow,
+    expectedValue: Math.round(p * wideOddsLow * 1000) / 1000,
+    edgePoints: Math.round((p - breakEven) * 1000) / 10,
+  };
+}
+
+// EVをrace_priority_score(0〜100の整数)へ写像する。capDailySRank/capDailyBuyCandidatesは
+// この列の降順で「今日買う4〜6レース」を選ぶため、ここが実際の期待値順になることで
+// 「予測力の無い自己申告スコアで買うレースを選んでいた」問題が解消される。
+// EV=1.0(損益分岐)を60点に置き、EV=1.67以上で満点になる線形写像。
+export function expectedValueToPriorityScore(expectedValue: number): number {
+  return Math.max(0, Math.min(100, Math.round(expectedValue * 60)));
+}
+
 export function computeEntryFitScores(
   entry: EntryDiagnosisInput,
   input: RaceDiagnosisInput,
