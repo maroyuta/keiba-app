@@ -968,6 +968,12 @@ export const SCREENING_SYSTEM_PROMPT = `あなたは競馬予想の一次スク�
 // レースデータのペイロード構築 (system側のルールに対する入力データ)
 // ============================================================
 
+// JV-Linkのオッズ取得失敗時、odds_winはnullではなく0で埋まる(2026-08-15/16の全977頭で再発)。
+// 0のままLLMへ渡すと「単勝0倍」という実在しない値として読まれるため、未取得としてnullに正規化する。
+export function normalizeOdds(odds: number | null): number | null {
+  return odds !== null && odds > 0 ? odds : null;
+}
+
 function serializeRace(race: RaceRow) {
   return {
     race_name: race.race_name,
@@ -1294,7 +1300,7 @@ function serializeEntry(
     horse_weight_diff_kg: input.entry.horse_weight_diff_kg,
     blinkers_change: input.entry.blinkers_change,
     equipment_note: input.entry.equipment_note,
-    odds_win: input.entry.odds_win,
+    odds_win: normalizeOdds(input.entry.odds_win),
     expected_popularity: input.entry.expected_popularity,
     // 単勝オッズ未取得時のフォールバック市場人気(ワイド/馬連の組合せオッズから機械算出、2026-08-09)。
     // expected_popularityがある時はそちらが正、無い時のみこの推定値を市場序列として使う。
@@ -1366,7 +1372,7 @@ function serializeScreeningEntry(input: EntryDiagnosisInput) {
     horse_number: input.entry.horse_number,
     post_position: input.entry.post_position,
     horse_name: input.horse.horse_name,
-    odds_win: input.entry.odds_win,
+    odds_win: normalizeOdds(input.entry.odds_win),
     expected_popularity: input.entry.expected_popularity,
   };
 }
@@ -1402,7 +1408,7 @@ function serializeStandardEntry(
     horse_weight_diff_kg: input.entry.horse_weight_diff_kg,
     blinkers_change: input.entry.blinkers_change,
     equipment_note: input.entry.equipment_note,
-    odds_win: input.entry.odds_win,
+    odds_win: normalizeOdds(input.entry.odds_win),
     expected_popularity: input.entry.expected_popularity,
     // 単勝オッズ未取得時のフォールバック市場人気(ワイド/馬連組合せから機械算出、2026-08-09)。
     estimated_popularity_from_combos: estimatedPopularityFromCombos,

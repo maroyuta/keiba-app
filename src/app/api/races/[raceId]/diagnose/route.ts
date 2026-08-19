@@ -50,10 +50,19 @@ const MAX_BET_POPULARITY = 9;
 const MIN_AITE_POPULARITY = 4;
 
 // expected_popularity(レース前オッズ由来、当日随時更新の速報値)が無いデータ(過去のバックテスト対象
+// ⚠️JV-Linkのオッズ取得が失敗した開催では、race_entries.odds_winがnullではなく**0**で埋まる
+// (2026-07-11に一度発生し、2026-08-15/16の全977頭でも再発)。0を有効なオッズとして扱うと、
+// (a)人気順マップが「全頭オッズ0で同着」→配列順のままの無意味な順位を人気として返し、
+// (b)viabilityガードが「1番人気0倍」を極端な鉄板と誤判定する、という2種類の静かな誤作動が起きる。
+// **オッズは0以下を「未取得(null)」として正規化し、捏造された人気で馬券を組まないようにする。**
+function normalizeOdds(odds: number | null): number | null {
+  return odds !== null && odds > 0 ? odds : null;
+}
+
 // レース等)でも検証できるよう、odds_win昇順の順位をフォールバックとして常に併用する。
 function buildOddsRankMap(input: RaceDiagnosisInput): Map<number, number> {
   const withOdds = input.entries
-    .map((e) => ({ horseNumber: e.entry.horse_number, oddsWin: e.entry.odds_win }))
+    .map((e) => ({ horseNumber: e.entry.horse_number, oddsWin: normalizeOdds(e.entry.odds_win) }))
     .filter((e): e is { horseNumber: number; oddsWin: number } => e.oddsWin !== null)
     .sort((a, b) => a.oddsWin - b.oddsWin);
   const rankMap = new Map<number, number>();
@@ -804,7 +813,7 @@ function enforceRaceViabilityGuard(
     reasons.push(`少頭数(${entryCount}頭≤${SMALL_FIELD_MAX}頭)`);
   }
   const oddsList = input.entries
-    .map((e) => e.entry.odds_win)
+    .map((e) => normalizeOdds(e.entry.odds_win))
     .filter((o): o is number => o !== null);
   if (oddsList.length > 0) {
     const favoriteOdds = Math.min(...oddsList);
