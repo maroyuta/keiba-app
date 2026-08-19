@@ -11,6 +11,7 @@
     "sync:netkeiba:recent": "tsx scripts/netkeiba/syncRecentRaces.ts",
     "sync:netkeiba:horse": "tsx scripts/netkeiba/runHorseHistory.ts",
     "sync:netkeiba:payouts": "tsx scripts/netkeiba/runPayouts.ts",
+    "sync:netkeiba:odds": "tsx scripts/netkeiba/runOdds.ts",
     "sync:netkeiba:shutuba": "tsx scripts/netkeiba/runShutuba.ts",
     "sync:netkeiba:shutuba-watch": "tsx scripts/netkeiba/runShutubaWatch.ts",
     "sync:netkeiba:historical": "tsx scripts/netkeiba/runHistoricalRaces.ts",

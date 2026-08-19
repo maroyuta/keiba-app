@@ -23,6 +23,31 @@ async function waitForRateLimit(): Promise<void> {
   lastRequestAt = Date.now();
 }
 
+// オッズAPI(race.netkeiba.com/api/api_get_jra_odds.html)用のJSON取得。
+// shutubaページのフロントエンド自身が叩いているエンドポイントで、認証なしでJSONを返す。
+// Refererを付けないと弾かれるケースがあるため、対応するshutubaページのURLを渡す。
+export async function fetchNetkeibaJson<T>(url: string, referer?: string): Promise<T | null> {
+  await waitForRateLimit();
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": NETKEIBA_USER_AGENT,
+        "Accept-Language": "ja,en;q=0.8",
+        ...(referer ? { Referer: referer } : {}),
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      console.warn(`[netkeiba] ${url} -> HTTP ${response.status}`);
+      return null;
+    }
+    return (await response.json()) as T;
+  } catch (err) {
+    console.warn(`[netkeiba] fetch failed for ${url}:`, err);
+    return null;
+  }
+}
+
 // 取得失敗時はnullを返す (呼び出し側でグレースフルデグラデーションする想定。例外は投げない)。
 //
 // race.netkeiba.com は charset=UTF-8 だが、db.netkeiba.com (馬個別ページ) は
