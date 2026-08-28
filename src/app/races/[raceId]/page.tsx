@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { RaceRank, BetType } from "@/lib/supabase/database.types";
 import { RankBadge } from "../RankBadge";
 import { DiagnoseButton } from "./DiagnoseButton";
+import { SyncOddsButton } from "./SyncOddsButton";
 import { EntriesList } from "./EntriesList";
 import { ReviewCheckbox } from "./ReviewCheckbox";
 
@@ -160,14 +161,17 @@ export default async function RaceDiagnosisPage({
             <p className="text-sm leading-relaxed text-[#f2efe6]/70">{race.race_rank_reason}</p>
           )}
 
-          <DiagnoseButton
-            raceId={race.id}
-            hasResult={race.race_rank !== null}
-            raceRank={race.race_rank as RaceRank | null}
-            raceClass={race.race_class}
-            raceGrade={race.grade}
-            premiumDiagnosedAt={race.premium_diagnosed_at}
-          />
+          <div className="flex flex-wrap items-start justify-center gap-2">
+            <DiagnoseButton
+              raceId={race.id}
+              hasResult={race.race_rank !== null}
+              raceRank={race.race_rank as RaceRank | null}
+              raceClass={race.race_class}
+              raceGrade={race.grade}
+              premiumDiagnosedAt={race.premium_diagnosed_at}
+            />
+            <SyncOddsButton raceId={race.id} />
+          </div>
 
           <ReviewCheckbox raceId={race.id} initialReviewedAt={race.reviewed_at} />
         </header>
